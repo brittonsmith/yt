@@ -58,7 +58,7 @@ class YTreeHDF5File(HaloCatalogFile):
 
         pos = np.empty((self.particle_count, 3), dtype="float64")
         for i, ax in enumerate('xyz'):
-            pos[:, i] = f["data/position_%s" % ax].value
+            pos[:, i] = f["data/position_%s" % ax][()]
 
         if close:
             f.close()
