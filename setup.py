@@ -34,7 +34,7 @@ try:
 except pkg_resources.DistributionNotFound:
     pass  # yay!
 
-VERSION = "3.5.dev0"
+VERSION = "3.6.dev0"
 
 if os.path.exists('MANIFEST'):
     os.remove('MANIFEST')
@@ -212,10 +212,10 @@ extensions = [
                "yt/analysis_modules/halo_finding/fof/kd.c"],
               libraries=std_libs),
     Extension("yt.analysis_modules.halo_finding.hop.EnzoHop",
-              glob.glob("yt/analysis_modules/halo_finding/hop/*.c")),
+              sorted(glob.glob("yt/analysis_modules/halo_finding/hop/*.c"))),
     Extension("yt.frontends.artio._artio_caller",
               ["yt/frontends/artio/_artio_caller.pyx"] +
-              glob.glob("yt/frontends/artio/artio_headers/*.c"),
+              sorted(glob.glob("yt/frontends/artio/artio_headers/*.c")),
               include_dirs=["yt/frontends/artio/artio_headers/",
                             "yt/geometry/",
                             "yt/utilities/lib/"],
@@ -322,7 +322,8 @@ package manager for your python environment.""" %
                 numpy.__version__)
         from Cython.Build import cythonize
         self.distribution.ext_modules[:] = cythonize(
-                self.distribution.ext_modules)
+            self.distribution.ext_modules,
+            compiler_directives={'language_level': 2})
         _build_ext.finalize_options(self)
         # Prevent numpy from thinking it is still in its setup process
         # see http://stackoverflow.com/a/21621493/1382869
@@ -341,7 +342,10 @@ class sdist(_sdist):
     def run(self):
         # Make sure the compiled Cython files in the distribution are up-to-date
         from Cython.Build import cythonize
-        cythonize(cython_extensions)
+        cythonize(
+            cython_extensions,
+            compiler_directives={'language_level': 2},
+        )
         _sdist.run(self)
 
 setup(

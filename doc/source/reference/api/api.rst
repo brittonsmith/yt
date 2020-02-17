@@ -172,11 +172,24 @@ These classes and functions enable yt's symbolic unit handling system.
    ~yt.units.yt_array.uvstack
    ~yt.units.yt_array.uhstack
    ~yt.units.yt_array.ustack
+   ~yt.units.yt_array.display_ytarray
 
 Frontends
 ---------
 
 .. autosummary::
+
+AMRVAC
+^^^^^^
+
+.. autosummary::
+
+   ~yt.frontends.amrvac.data_structures.AMRVACGrid
+   ~yt.frontends.amrvac.data_structures.AMRVACHierarchy
+   ~yt.frontends.amrvac.data_structures.AMRVACDataset
+   ~yt.frontends.amrvac.fields.AMRVACFieldInfo
+   ~yt.frontends.amrvac.io.AMRVACIOHandler
+   ~yt.frontends.amrvac.read_amrvac_namelist
 
 ARTIO
 ^^^^^
@@ -438,6 +451,7 @@ Loading Data
    ~yt.frontends.stream.data_structures.load_uniform_grid
    ~yt.frontends.stream.data_structures.load_amr_grids
    ~yt.frontends.stream.data_structures.load_particles
+   ~yt.frontends.stream.data_structures.load_octree
    ~yt.frontends.stream.data_structures.load_hexahedral_mesh
    ~yt.frontends.stream.data_structures.load_unstructured_mesh
 
@@ -477,7 +491,6 @@ of topologically disconnected structures, i.e., clump finding.
    ~yt.data_objects.level_sets.clump_handling.Clump.add_validator
    ~yt.data_objects.level_sets.clump_handling.Clump.save_as_dataset
    ~yt.data_objects.level_sets.clump_handling.find_clumps
-   ~yt.data_objects.level_sets.clump_handling.get_lowest_clumps
    ~yt.data_objects.level_sets.clump_info_items.add_clump_info
    ~yt.data_objects.level_sets.clump_validators.add_validator
 

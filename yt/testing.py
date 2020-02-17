@@ -236,7 +236,7 @@ _geom_transforms = {
                    ( (-90.0, -180.0, 0.0), (90.0, 180.0, 1000.0) ), # latlondep
 }
 
-def fake_amr_ds(fields = ("Density",), geometry = "cartesian", particles=0):
+def fake_amr_ds(fields = ("Density",), geometry = "cartesian", particles=0, length_unit=None):
     from yt.frontends.stream.api import load_amr_grids
     prng = RandomState(0x4d3d3d3)
     LE, RE = _geom_transforms[geometry]
@@ -264,7 +264,7 @@ def fake_amr_ds(fields = ("Density",), geometry = "cartesian", particles=0):
             gdata['io', 'particle_mass'] = (prng.random_sample(particles), 'g')
         data.append(gdata)
     bbox = np.array([LE, RE]).T
-    return load_amr_grids(data, [32, 32, 32], geometry=geometry, bbox=bbox)
+    return load_amr_grids(data, [32, 32, 32], geometry=geometry, bbox=bbox, length_unit=length_unit)
 
 def fake_particle_ds(
         fields = ("particle_position_x",
@@ -276,7 +276,8 @@ def fake_particle_ds(
                   "particle_velocity_z"),
         units = ('cm', 'cm', 'cm', 'g', 'cm/s', 'cm/s', 'cm/s'),
         negative = (False, False, False, False, True, True, True),
-        npart = 16**3, length_unit=1.0, data=None):
+        npart = 16**3, length_unit=1.0, data=None,
+        over_refine_factor = 1):
     from yt.frontends.stream.api import load_particles
 
     prng = RandomState(0x4d3d3d3)
@@ -300,7 +301,7 @@ def fake_particle_ds(
         v = (prng.random_sample(npart) - offset)
         data[field] = (v, u)
     bbox = np.array([[0.0, 1.0], [0.0, 1.0], [0.0, 1.0]])
-    ds = load_particles(data, 1.0, bbox=bbox)
+    ds = load_particles(data, 1.0, bbox=bbox, over_refine_factor = over_refine_factor)
     return ds
 
 
