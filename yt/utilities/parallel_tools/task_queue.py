@@ -146,7 +146,8 @@ def task_queue(func, tasks, njobs=0):
     communication_system.pop()
     return my_q.run(func)
 
-def dynamic_parallel_objects(tasks, njobs=0, storage=None, broadcast=True):
+def dynamic_parallel_objects(tasks, njobs=0, storage=None, broadcast=True,
+                             pbar=None):
     comm = _get_comm(())
     if not parallel_capable:
         mylog.error("Cannot create task queue for serial process.")
@@ -169,7 +170,7 @@ def dynamic_parallel_objects(tasks, njobs=0, storage=None, broadcast=True):
     
     if comm.comm.rank == 0:
         my_q = TaskQueueRoot(tasks, comm, njobs)
-        my_q.comm.probe_loop(1, my_q.handle_assignment)
+        my_q.comm.probe_loop(1, my_q.handle_assignment, pbar=pbar)
     else:
         my_q = TaskQueueNonRoot(None, comm, subcomm)
         if storage is None:
