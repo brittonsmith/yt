@@ -413,7 +413,7 @@ class ResultsStorage(object):
     result_id = None
 
 def parallel_objects(objects, njobs = 0, storage = None, barrier = True,
-                     dynamic = False):
+                     dynamic = False, pbar=None):
     r"""This function dispatches components of an iterable to different
     processors.
 
@@ -478,7 +478,7 @@ def parallel_objects(objects, njobs = 0, storage = None, barrier = True,
     if dynamic:
         from .task_queue import dynamic_parallel_objects
         for my_obj in dynamic_parallel_objects(objects, njobs=njobs,
-                                               storage=storage):
+                                               storage=storage, pbar=pbar):
             yield my_obj
         return
 
@@ -1073,7 +1073,7 @@ class Communicator(object):
                                   (tmp_recv, (rsize, roff), MPI.CHAR))
         return recv
 
-    def probe_loop(self, tag, callback):
+    def probe_loop(self, tag, callback, pbar=None):
         while 1:
             st = MPI.Status()
             self.comm.Probe(MPI.ANY_SOURCE, tag = tag, status = st)
@@ -1082,6 +1082,8 @@ class Communicator(object):
             except StopIteration:
                 mylog.debug("Probe loop ending.")
                 break
+            if pbar is not None:
+                pbar.update(1)
 
 communication_system = CommunicationSystem()
 
