@@ -76,6 +76,9 @@ class Clump(TreeContainer):
         else:
             self.clump_info = clump_info
 
+        for ci in self.clump_info:
+            ci(self)
+
         self.base = base
         self.clump_id = self.base.total_clumps
         self.base.total_clumps += 1
@@ -117,6 +120,7 @@ class Clump(TreeContainer):
         "Adds an entry to clump_info list and tells children to do the same."
 
         callback = clump_info_registry.find(info_item, *args, **kwargs)
+        callback(self)
         self.clump_info.append(callback)
         for child in self.children:
             child.add_info_item(info_item)
@@ -179,6 +183,7 @@ class Clump(TreeContainer):
             self.children.append(Clump(new_clump, self.field, parent=self,
                                        validators=self.validators,
                                        base=self.base,
+                                       clump_info=self.clump_info,
                                        contour_key=contour_key,
                                        contour_id=cid))
 
@@ -274,7 +279,6 @@ class Clump(TreeContainer):
             clump_info["contour_id"].append(contour_id)
 
             for ci in self.base.clump_info:
-                ci(clump)
                 clump_info[ci.name].append(clump.info[ci.name][1])
         for ci in clump_info:
             if hasattr(clump_info[ci][0], "units"):
@@ -354,7 +358,7 @@ class Clump(TreeContainer):
                         cfilters[cfield] = field_data[cfield] == self.contour_id
                     field_data[field] = field_data[field][cfilters[cfield]]
 
-        clump_info.update(field_data)
+            clump_info.update(field_data)
         extra_attrs = {"data_type": "yt_clump_tree",
                        "container_type": "yt_clump_tree"}
         save_as_dataset(ds, filename, clump_info,
@@ -404,8 +408,9 @@ class Clump(TreeContainer):
 def find_clumps(clump, min_val, max_val, d_clump):
     mylog.info("Finding clumps: min: %e, max: %e, step: %f" % 
                (min_val, max_val, d_clump))
-    if min_val >= max_val: return
-    clump.find_children(min_val)
+    if min_val >= max_val:
+        return
+    clump.find_children(min_val, max_val=max_val)
 
     if len(clump.children) == 1:
         find_clumps(clump, min_val*d_clump, max_val, d_clump)

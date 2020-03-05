@@ -373,13 +373,13 @@ class DualEPS(object):
             _ylabel = pyxize_label(yaxis.label.get_text())
             # set log if necessary
             if subplot.get_xscale() == "log":
-                 _xlog = True 
+                _xlog = True 
             else:
-                 _xlog = False
+                _xlog = False
             if subplot.get_yscale() == "log":
-                 _ylog = True 
+                _ylog = True 
             else:
-                 _ylog = False
+                _ylog = False
             _tickcolor = None 
         elif isinstance(plot, PhasePlot):
             k = list(plot.plots.keys())[0]
@@ -799,7 +799,8 @@ class DualEPS(object):
 
     def arrow(self, size=0.2, label="", loc=(0.05,0.08), labelloc="top",
               color=pyx.color.cmyk.white,
-              linewidth=pyx.style.linewidth.normal):
+              linewidth=pyx.style.linewidth.normal,
+              rotation=0.0):
         r"""Draws an arrow in the current figure
 
         Parameters
@@ -811,6 +812,8 @@ class DualEPS(object):
         loc : tuple of floats
             Location of the left hand side of the arrow in units of
             the figure size.
+        rotation : float
+            Orientation angle of the arrow in units of degrees
         labelloc : string
             Location of the label with respect to the line.  Can be
             "top" or "bottom"
@@ -829,8 +832,8 @@ class DualEPS(object):
         """
         line = pyx.path.line(self.figsize[0]*loc[0],
                              self.figsize[1]*loc[1],
-                             self.figsize[0]*(loc[0]+size),
-                             self.figsize[1]*loc[1])
+                             self.figsize[0]*(loc[0]+size*np.cos(np.pi*rotation/180)),
+                             self.figsize[1]*(loc[1]+size*np.sin(np.pi*rotation/180)))
         self.canvas.stroke(line, [linewidth, color, pyx.deco.earrow()])
        
 
@@ -972,9 +975,9 @@ class DualEPS(object):
         elif format == "pdf":
             self.canvas.writePDFfile(filename)
         elif format == "png":
-             self.canvas.writeGSfile(filename+".png", "png16m", resolution=resolution)
+            self.canvas.writeGSfile(filename+".png", "png16m", resolution=resolution)
         elif format == "jpg":
-             self.canvas.writeGSfile(filename+".jpeg", "jpeg", resolution=resolution)
+            self.canvas.writeGSfile(filename+".jpeg", "jpeg", resolution=resolution)
         else:
             raise RuntimeError("format %s unknown." % (format))
             

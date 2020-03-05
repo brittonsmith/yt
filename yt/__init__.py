@@ -1,10 +1,10 @@
 """
 yt is a toolkit for analyzing and visualizing volumetric data.
 
-* Website: http://yt-project.org
-* Documentation: http://yt-project.org/doc
-* Data hub: http://hub.yt
-* Contribute: http://github.com/yt-project/yt
+* Website: https://yt-project.org
+* Documentation: https://yt-project.org/doc
+* Data hub: https://girder.hub.yt
+* Contribute: https://github.com/yt-project/yt
 
 """
 
@@ -16,7 +16,7 @@ yt is a toolkit for analyzing and visualizing volumetric data.
 # The full license is in the file COPYING.txt, distributed with this software.
 #-----------------------------------------------------------------------------
 
-__version__ = "3.5.dev0"
+__version__ = "3.6.dev0"
 
 # First module imports
 import numpy as np # For modern purposes
@@ -57,7 +57,8 @@ from yt.units.yt_array import \
     uvstack, \
     uhstack, \
     loadtxt, \
-    savetxt
+    savetxt, \
+    display_ytarray
 
 from yt.fields.api import \
     field_plugins, \

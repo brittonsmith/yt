@@ -31,7 +31,7 @@ Data Meaning Structures
 -----------------------
 
 If you are interested in adding a new code, be sure to drop us a line on
-`yt-dev <https://mail.python.org/mm3/archives/list/yt-dev@python.org/>`_!
+`yt-dev <https://mail.python.org/archives/list/yt-dev@python.org/>`_!
 
 To get started, make a new directory in ``yt/frontends`` with the name
 of your code and add the name into ``yt/frontends/api.py``.
@@ -226,10 +226,10 @@ that is needed:
     class ChomboGrid(AMRGridPatch):
         _id_offset = 0
         __slots__ = ["_level_id"]
-        def __init__(self, id, index, level = -1):
-            AMRGridPatch.__init__(self, id, filename = index.index_filename,
-                                  index = index)
-            self.Parent = []
+        def __init__(self, id, index, level=-1):
+            AMRGridPatch.__init__(self, id, filename=index.index_filename,
+                                  index=index)
+            self.Parent = None
             self.Children = []
             self.Level = level
 
@@ -276,6 +276,6 @@ fashion, but the ``yt.frontends.boxlib.io.IOHandlerBoxlib`` is a
 decent place to start.
 
 And that just about covers it. Please feel free to email
-`yt-users <https://mail.python.org/mm3/archives/list/yt-users@python.org/>`_ or
-`yt-dev <https://mail.python.org/mm3/archives/list/yt-dev@python.org/>`_ with
+`yt-users <https://mail.python.org/archives/list/yt-users@python.org/>`_ or
+`yt-dev <https://mail.python.org/archives/list/yt-dev@python.org/>`_ with
 any questions, or to let us know you're thinking about adding a new code to yt.
