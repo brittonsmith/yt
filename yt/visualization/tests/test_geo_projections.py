@@ -29,7 +29,7 @@ def setup():
 def compare(ds, field, idir, test_prefix, test_name, projection,
             decimals=12, annotate=False):
     def slice_image(filename_prefix):
-        sl = yt.SlicePlot(ds, idir, field)
+        sl = yt.SlicePlot(ds, idir, field, origin = "native")
         sl.set_mpl_projection(projection)
         if annotate:
             sl._setup_plots()
@@ -60,21 +60,22 @@ def test_geo_slices_amr():
             yield compare(ds, field, 'altitude', test_prefix=prefix,
                           test_name="geo_slices_amr", projection=transform)
 
-@requires_module("cartopy")
 class TestGeoProjections(unittest.TestCase):
 
+    @requires_module("cartopy")
     def setUp(self):
         self.ds = fake_amr_ds(geometry="geographic")
 
+    @requires_module("cartopy")
     def tearDown(self):
         del self.ds
-        del self.slc
 
+    @requires_module("cartopy")
     def test_geo_projection_setup(self):
 
         from yt.utilities.on_demand_imports import _cartopy as cartopy
         axis = "altitude"
-        self.slc = yt.SlicePlot(self.ds, axis, "Density")
+        self.slc = yt.SlicePlot(self.ds, axis, "Density", origin = "native")
 
         assert isinstance(self.slc._projection, cartopy.crs.Mollweide)
         assert isinstance(self.slc._transform, cartopy.crs.PlateCarree)
@@ -83,9 +84,10 @@ class TestGeoProjections(unittest.TestCase):
         assert isinstance(self.slc._projection,
                           type(self.slc.plots['Density'].axes.projection))
 
+    @requires_module("cartopy")
     def test_geo_projections(self):
         from yt.utilities.on_demand_imports import _cartopy as cartopy
-        self.slc = yt.SlicePlot(self.ds, "altitude", "Density")
+        self.slc = yt.SlicePlot(self.ds, "altitude", "Density", origin = "native")
 
         for transform in transform_list:
             if transform == 'UTM':
@@ -102,6 +104,7 @@ class TestGeoProjections(unittest.TestCase):
             assert isinstance(self.slc.plots['Density'].axes.projection,
                               proj_type)
 
+    @requires_module("cartopy")
     def test_projection_object(self):
         from yt.utilities.on_demand_imports import _cartopy as cartopy
         shortlist = ['Orthographic', 'PlateCarree', 'Mollweide']
@@ -109,7 +112,7 @@ class TestGeoProjections(unittest.TestCase):
         for transform in shortlist:
             projection = get_mpl_transform(transform)
             proj_type = type(projection)
-            self.slc = yt.SlicePlot(self.ds, "altitude", "Density")
+            self.slc = yt.SlicePlot(self.ds, "altitude", "Density", origin = "native")
             self.slc.set_mpl_projection(projection)
 
             assert isinstance(self.slc._projection, proj_type)
@@ -117,11 +120,12 @@ class TestGeoProjections(unittest.TestCase):
             assert isinstance(self.slc.plots['Density'].axes.projection,
                               proj_type)
 
+    @requires_module("cartopy")
     def test_nondefault_transform(self):
         from yt.utilities.on_demand_imports import _cartopy as cartopy
         axis = "altitude"
         self.ds.coordinates.data_transform[axis] = "Miller"
-        self.slc = yt.SlicePlot(self.ds, axis, "Density")
+        self.slc = yt.SlicePlot(self.ds, axis, "Density", origin = "native")
 
         shortlist = ['Orthographic', 'PlateCarree', 'Mollweide']
 
@@ -148,7 +152,7 @@ class TestNonGeoProjections(unittest.TestCase):
 
     def test_projection_setup(self):
         axis = "x"
-        self.slc = yt.SlicePlot(self.ds, axis, "Density")
+        self.slc = yt.SlicePlot(self.ds, axis, "Density", origin = "native")
 
         assert self.ds.coordinates.data_projection[axis] is None
         assert self.ds.coordinates.data_transform[axis] is None

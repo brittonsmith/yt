@@ -170,6 +170,7 @@ class StreamHierarchy(GridIndex):
         self.grid_left_edge[:] = self.stream_handler.left_edges
         self.grid_right_edge[:] = self.stream_handler.right_edges
         self.grid_levels[:] = self.stream_handler.levels
+        self.min_level = self.grid_levels.min()
         self.grid_procs = self.stream_handler.processor_ids
         self.grid_particle_count[:] = self.stream_handler.particle_count
         mylog.debug("Copying reverse tree")
@@ -551,9 +552,9 @@ def process_data(data, grid_dims=None):
                      + StreamFieldInfo.known_other_fields
         # We do not want to override any of the known ones, if it's not
         # overridden here.
-        if any(f[0] == new_field[1] for f in known_fields) and \
-           field_units[new_field] == "":
-               field_units.pop(new_field)
+        if any(f[0] == new_field[1] for f in known_fields) \
+        and field_units[new_field] == "":
+           field_units.pop(new_field)
     data = new_data
     # Sanity checking that all fields have the same dimensions.
     g_shapes = []

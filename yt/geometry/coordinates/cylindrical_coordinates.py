@@ -128,13 +128,14 @@ class CylindricalCoordinateHandler(CoordinateHandler):
         return buff
 
     def _cyl_pixelize(self, data_source, field, bounds, size, antialias):
-        buff = np.zeros((size[1], size[0]), dtype="f8")
+        buff = np.full((size[1], size[0]), np.nan, dtype="f8")
         pixelize_cylinder(buff,
                           data_source['px'],
                           data_source['pdx'],
                           data_source['py'],
                           data_source['pdy'],
                           data_source[field], bounds)
+        self.sanitize_buffer_fill_values(buff)
         return buff
 
     _x_pairs = (('r', 'theta'), ('z', 'r'), ('theta', 'r'))
@@ -203,8 +204,8 @@ class CylindricalCoordinateHandler(CoordinateHandler):
         r_ax, theta_ax, z_ax = (self.ds.coordinates.axis_id[ax]
                                 for ax in ('r', 'theta', 'z'))
         if width is not None:
-             width = super(CylindricalCoordinateHandler,
-                           self).sanitize_width(axis, width, depth)
+            width = super(CylindricalCoordinateHandler,
+                self).sanitize_width(axis, width, depth)
         # Note: regardless of axes, these are set up to give consistent plots
         # when plotted, which is not strictly a "right hand rule" for axes.
         elif name == "r": # soup can label

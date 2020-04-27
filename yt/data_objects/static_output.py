@@ -242,7 +242,6 @@ class Dataset(object):
         # to get the timing right, do this before the heavy lifting
         self._instantiated = time.time()
 
-        self.min_level = 0
         self.no_cgs_equiv_length = False
 
         self._create_unit_registry()
@@ -571,10 +570,13 @@ class Dataset(object):
             cls = PolarCoordinateHandler
         elif self.geometry == "spherical":
             cls = SphericalCoordinateHandler
+            self.no_cgs_equiv_length = True
         elif self.geometry == "geographic":
             cls = GeographicCoordinateHandler
+            self.no_cgs_equiv_length = True
         elif self.geometry == "internal_geographic":
             cls = InternalGeographicCoordinateHandler
+            self.no_cgs_equiv_length = True
         elif self.geometry == "spectral_cube":
             cls = SpectralCubeCoordinateHandler
         else:
@@ -717,12 +719,10 @@ class Dataset(object):
             # the type of field it is.  So we look at the field type and
             # determine if we need to change the type.
             fi = self._last_finfo = self.field_info[fname]
-            if fi.particle_type and self._last_freq[0] \
-                not in self.particle_types:
-                    field = "all", field[1]
-            elif not fi.particle_type and self._last_freq[0] \
-                not in self.fluid_types:
-                    field = self.default_fluid_type, field[1]
+            if fi.particle_type and self._last_freq[0] not in self.particle_types:
+                field = "all", field[1]
+            elif not fi.particle_type and self._last_freq[0] not in self.fluid_types:
+                field = self.default_fluid_type, field[1]
             self._last_freq = field
             return self._last_finfo
         # We also should check "all" for particles, which can show up if you're
@@ -1255,7 +1255,7 @@ class Dataset(object):
            This is the "method name" which will be looked up in the
            `particle_deposit` namespace as `methodname_deposit`.  Current
            methods include `simple_smooth`, `sum`, `std`, `cic`, `weighted_mean`,
-           `mesh_id`, and `nearest`.
+           `nearest` and `count`.
         kernel_name : string, default 'cubic'
            This is the name of the smoothing kernel to use. It is only used for
            the `simple_smooth` method and is otherwise ignored. Current
@@ -1277,7 +1277,7 @@ class Dataset(object):
 
         units = self.field_info[ptype, deposit_field].units
         take_log = self.field_info[ptype, deposit_field].take_log
-        name_map = {"sum": "sum", "std":"std", "cic": "cic", "weighted_mean": "avg",
+        name_map = {"sum": "sum", "std": "std", "cic": "cic", "weighted_mean": "avg",
                     "nearest": "nn", "simple_smooth": "ss", "count": "count"}
         field_name = "%s_" + name_map[method] + "_%s"
         field_name = field_name % (ptype, deposit_field.replace('particle_', ''))
@@ -1393,24 +1393,28 @@ class Dataset(object):
 
         Examples
         --------
+
         >>> grad_fields = ds.add_gradient_fields(("gas","temperature"))
         >>> print(grad_fields)
         [('gas', 'temperature_gradient_x'),
          ('gas', 'temperature_gradient_y'),
          ('gas', 'temperature_gradient_z'),
          ('gas', 'temperature_gradient_magnitude')]
+
+        Note that the above example assumes ds.geometry == 'cartesian'. In general, the function
+        will create gradients components along the axes of the dataset coordinate system.
+        For instance, with cylindrical data, one gets 'temperature_gradient_<r,theta,z>'
         """
         self.index
-        if isinstance(input_field, tuple):
-            ftype, input_field = input_field[0], input_field[1]
-        else:
-            raise RuntimeError
+        if not isinstance(input_field, tuple):
+            raise TypeError
+        ftype, input_field = input_field[0], input_field[1]
         units = self.field_info[ftype, input_field].units
         setup_gradient_fields(self.field_info, (ftype, input_field), units)
         # Now we make a list of the fields that were just made, to check them
         # and to return them
         grad_fields = [(ftype,input_field+"_gradient_%s" % suffix)
-                       for suffix in "xyz"]
+                       for suffix in self.coordinates.axis_order]
         grad_fields.append((ftype,input_field+"_gradient_magnitude"))
         deps, _ = self.field_info.check_derived_fields(grad_fields)
         self.field_dependencies.update(deps)
@@ -1421,12 +1425,22 @@ class Dataset(object):
     def max_level(self):
         if self._max_level is None:
             self._max_level = self.index.max_level
-
         return self._max_level
 
     @max_level.setter
     def max_level(self, value):
         self._max_level = value
+
+    _min_level = None
+    @property
+    def min_level(self):
+        if self._min_level is None:
+            self._min_level = self.index.min_level
+        return self._min_level
+
+    @min_level.setter
+    def min_level(self, value):
+        self._min_level = value
 
     def define_unit(self, symbol, value, tex_repr=None, offset=None, prefixable=False):
         """

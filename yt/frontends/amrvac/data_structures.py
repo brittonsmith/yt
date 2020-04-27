@@ -102,6 +102,7 @@ class AMRVACHierarchy(GridIndex):
         # YT uses 0-based grid indexing, lowest level = 0 (AMRVAC uses 1 for lowest level)
         ytlevels = np.array(vaclevels, dtype="int32") - 1
         self.grid_levels.flat[:] = ytlevels
+        self.min_level = np.min(ytlevels)
         self.max_level = np.max(ytlevels)
         assert self.max_level == self.dataset.parameters["levmax"] - 1
 
@@ -219,8 +220,7 @@ class AMRVACDataset(Dataset):
                         istream.seek(0,2)
                         file_size = istream.tell()
                         validation = offset_tree < file_size and offset_blocks < file_size
-            except:
-                pass
+            except Exception: pass
         return validation
 
     def _parse_geometry(self, geometry_tag):
@@ -230,16 +230,12 @@ class AMRVACDataset(Dataset):
         ----------
         geometry_tag : str
             A geometry tag as read from AMRVAC's datfile from v5.
+            If "default" is found, it is translated to "cartesian".
 
         Returns
         -------
         geometry_yt : str
-            Lower case geometry tag among "cartesian", "polar", "cylindrical", "spherical"
-
-        Raises
-        ------
-        ValueError
-            In case the tag is not properly formatted or recognized.
+            Lower case geometry tag among "cartesian", "polar", "cylindrical", "spherical".
 
         Examples
         --------
@@ -249,10 +245,15 @@ class AMRVACDataset(Dataset):
 
         """
         # frontend specific method
-        geometry_yt = geometry_tag.split("_")[0].lower()
-        if geometry_yt not in ("cartesian", "polar", "cylindrical", "spherical"):
-            raise ValueError
-        return geometry_yt
+        known_geoms = {
+            "default": "cartesian",
+            "cartesian": "cartesian",
+            "polar": "polar",
+            "cylindrical": "cylindrical",
+            "spherical": "spherical"
+        }
+        geom_key = geometry_tag.split("_")[0].lower()
+        return known_geoms[geom_key]
 
     def _parse_parameter_file(self):
         """Parse input datfile's header. Apply geometry_override if specified."""
