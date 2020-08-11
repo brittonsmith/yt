@@ -468,7 +468,7 @@ class YTArray(np.ndarray):
                 bypass_validation=False):
         if dtype is None:
             dtype = getattr(input_array, 'dtype', np.float64)
-        if bypass_validation is True:
+        if bypass_validation:
             obj = np.asarray(input_array, dtype=dtype).view(cls)
             obj.units = input_units
             if registry is not None:
@@ -962,7 +962,7 @@ class YTArray(np.ndarray):
         if dataset_name is None:
             dataset_name = 'array_data'
 
-        f = h5py.File(filename)
+        f = h5py.File(filename, mode="a")
         if group_name is not None:
             if group_name in f:
                 g = f[group_name]
@@ -1011,7 +1011,7 @@ class YTArray(np.ndarray):
         if dataset_name is None:
             dataset_name = 'array_data'
 
-        f = h5py.File(filename)
+        f = h5py.File(filename, mode="r")
         if group_name is not None:
             g = f[group_name]
         else:

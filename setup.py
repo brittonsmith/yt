@@ -34,7 +34,7 @@ try:
 except pkg_resources.DistributionNotFound:
     pass  # yay!
 
-VERSION = "3.6.dev0"
+VERSION = "3.7.dev0"
 
 if os.path.exists('MANIFEST'):
     os.remove('MANIFEST')
@@ -42,7 +42,7 @@ if os.path.exists('MANIFEST'):
 with open('README.md') as file:
     long_description = file.read()
 
-if check_for_openmp() is True:
+if check_for_openmp():
     omp_args = ['-fopenmp']
 else:
     omp_args = None
@@ -365,8 +365,10 @@ setup(
                  "Programming Language :: Python :: 2",
                  "Programming Language :: Python :: 2.7",
                  "Programming Language :: Python :: 3",
-                 "Programming Language :: Python :: 3.4",
                  "Programming Language :: Python :: 3.5",
+                 "Programming Language :: Python :: 3.6",
+                 "Programming Language :: Python :: 3.7",
+                 "Programming Language :: Python :: 3.8",
                  "Topic :: Scientific/Engineering :: Astronomy",
                  "Topic :: Scientific/Engineering :: Physics",
                  "Topic :: Scientific/Engineering :: Visualization",

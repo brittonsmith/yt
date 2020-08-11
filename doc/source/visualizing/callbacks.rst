@@ -85,6 +85,36 @@ of the x-plane (i.e. with axes in the y and z directions):
                     text_args={'color':'black'})
     s.save()
 
+Note that for non-cartesian geometries and ``coord_system="data"``, the coordinates
+are still interpreted in the corresponding cartesian system. For instance using a polar
+dataset from AMRVAC :
+
+.. python-script::
+
+    import yt
+
+    ds = yt.load("amrvac/bw_polar_2D0000.dat")
+    s = yt.plot2d(ds, 'density')
+    s.set_background_color("density", "black")
+
+    # Plot marker and text in data coords
+    s.annotate_marker((0.2, 0.5, 0.9), coord_system='data')
+    s.annotate_text((0.2, 0.5, 0.9), 'data: (0.2, 0.5, 0.9)', coord_system='data')
+
+    # Plot marker and text in plot coords
+    s.annotate_marker((0.4, -0.5), coord_system='plot')
+    s.annotate_text((0.4, -0.5), 'plot: (0.4, -0.5)', coord_system='plot')
+
+    # Plot marker and text in axis coords
+    s.annotate_marker((0.1, 0.2), coord_system='axis')
+    s.annotate_text((0.1, 0.2), 'axis: (0.1, 0.2)', coord_system='axis')
+
+    # Plot marker and text in figure coords
+    # N.B. marker will not render outside of axis bounds
+    s.annotate_marker((0.6, 0.2), coord_system='figure')
+    s.annotate_text((0.6, 0.2), 'figure: (0.6, 0.2)', coord_system='figure')
+    s.save()
+
 Available Callbacks
 -------------------
 
@@ -730,7 +760,7 @@ Annotate Triangle Facets Callback
    #setup file path for yt test directory
    filename = os.path.join(yt.config.ytcfg.get("yt", "test_data_dir"),
                            "MoabTest/mcnp_n_impr_fluka.h5m")
-   f = h5py.File(filename, "r")
+   f = h5py.File(filename, mode="r")
    coords = f["/tstt/nodes/coordinates"][:]
    conn = f["/tstt/elements/Tri3/connectivity"][:]
    points = coords[conn-1]

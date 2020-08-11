@@ -141,7 +141,7 @@ Lyman continuum.
 Making the Spectrum
 ^^^^^^^^^^^^^^^^^^^
 
-Once all the lines and continuua are added, it is time to make a spectrum out
+Once all the lines and continua are added, it is time to make a spectrum out
 of some light ray data.
 
 .. code-block:: python
@@ -195,7 +195,7 @@ errors produced in saving to a ascii file will negatively impact fit quality.
 
 .. code-block:: python
 
-    f = h5py.File('spectrum.h5')
+    f = h5py.File('spectrum.h5', mode='r')
     wavelength = f["wavelength"][:]
     flux = f['flux'][:]
     f.close()

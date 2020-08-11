@@ -200,7 +200,7 @@ class Dataset(object):
             obj = object.__new__(cls)
         elif cache_key not in _cached_datasets:
             obj = object.__new__(cls)
-            if obj._skip_cache is False:
+            if not obj._skip_cache:
                 _cached_datasets[cache_key] = obj
         else:
             obj = _cached_datasets[cache_key]
@@ -570,10 +570,13 @@ class Dataset(object):
             cls = PolarCoordinateHandler
         elif self.geometry == "spherical":
             cls = SphericalCoordinateHandler
+            self.no_cgs_equiv_length = True
         elif self.geometry == "geographic":
             cls = GeographicCoordinateHandler
+            self.no_cgs_equiv_length = True
         elif self.geometry == "internal_geographic":
             cls = InternalGeographicCoordinateHandler
+            self.no_cgs_equiv_length = True
         elif self.geometry == "spectral_cube":
             cls = SpectralCubeCoordinateHandler
         else:
@@ -844,10 +847,12 @@ class Dataset(object):
         # but need to check if left_edge or right_edge is a
         # list or other non-array iterable before calculating
         # the center
-        if not isinstance(left_edge, np.ndarray):
-            left_edge = np.array(left_edge, dtype='float64')
-        if not isinstance(right_edge, np.ndarray):
-            right_edge = np.array(right_edge, dtype='float64')
+        if isinstance(left_edge[0], YTQuantity):
+            left_edge = YTArray(left_edge)
+            right_edge = YTArray(right_edge)
+
+        left_edge = np.asanyarray(left_edge, dtype='float64')
+        right_edge = np.asanyarray(right_edge, dtype='float64')
         c = (left_edge + right_edge)/2.0
         return self.region(c, left_edge, right_edge, **kwargs)
 
@@ -874,7 +879,7 @@ class Dataset(object):
     @property
     def particle_type_counts(self):
         self.index
-        if self.particles_exist is False:
+        if not self.particles_exist:
             return {}
 
         # frontends or index implementation can populate this dict while
@@ -1390,24 +1395,28 @@ class Dataset(object):
 
         Examples
         --------
+
         >>> grad_fields = ds.add_gradient_fields(("gas","temperature"))
         >>> print(grad_fields)
         [('gas', 'temperature_gradient_x'),
          ('gas', 'temperature_gradient_y'),
          ('gas', 'temperature_gradient_z'),
          ('gas', 'temperature_gradient_magnitude')]
+
+        Note that the above example assumes ds.geometry == 'cartesian'. In general, the function
+        will create gradients components along the axes of the dataset coordinate system.
+        For instance, with cylindrical data, one gets 'temperature_gradient_<r,theta,z>'
         """
         self.index
-        if isinstance(input_field, tuple):
-            ftype, input_field = input_field[0], input_field[1]
-        else:
-            raise RuntimeError
+        if not isinstance(input_field, tuple):
+            raise TypeError
+        ftype, input_field = input_field[0], input_field[1]
         units = self.field_info[ftype, input_field].units
         setup_gradient_fields(self.field_info, (ftype, input_field), units)
         # Now we make a list of the fields that were just made, to check them
         # and to return them
         grad_fields = [(ftype,input_field+"_gradient_%s" % suffix)
-                       for suffix in "xyz"]
+                       for suffix in self.coordinates.axis_order]
         grad_fields.append((ftype,input_field+"_gradient_magnitude"))
         deps, _ = self.field_info.check_derived_fields(grad_fields)
         self.field_dependencies.update(deps)

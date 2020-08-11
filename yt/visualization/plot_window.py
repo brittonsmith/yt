@@ -135,7 +135,7 @@ def validate_mesh_fields(data_source, fields):
     canonical_fields = data_source._determine_fields(fields)
     invalid_fields = []
     for field in canonical_fields:
-        if data_source.ds.field_info[field].particle_type is True:
+        if data_source.ds.field_info[field].particle_type:
             invalid_fields.append(field)
 
     if len(invalid_fields) > 0:
@@ -204,7 +204,7 @@ class PlotWindow(ImagePlotContainer):
 
         self._set_window(bounds) # this automatically updates the data and plot
         self.origin = origin
-        if self.data_source.center is not None and oblique is False:
+        if self.data_source.center is not None and not oblique:
             ax = self.data_source.axis
             xax = self.ds.coordinates.x_axis[ax]
             yax = self.ds.coordinates.y_axis[ax]
@@ -243,7 +243,7 @@ class PlotWindow(ImagePlotContainer):
     def frb():
         doc = "The frb property."
         def fget(self):
-            if self._frb is None or self._data_valid is False:
+            if self._frb is None or not self._data_valid:
                 self._recreate_frb()
             return self._frb
 
@@ -417,39 +417,38 @@ class PlotWindow(ImagePlotContainer):
         Parameters
         ----------
         origin : string or length 1, 2, or 3 sequence.
-            The location of the origin of the plot coordinate system. This
-            is typically represented by a '-' separated string or a tuple of
-            strings. In the first index the y-location is given by 'lower',
-            'upper', or 'center'. The second index is the x-location, given as
-            'left', 'right', or 'center'. Finally, whether the origin is
-            applied in 'domain' space, plot 'window' space or 'native'
-            simulation coordinate system is given. For example, both
-            'upper-right-domain' and ['upper', 'right', 'domain'] place the
-            origin in the upper right hand corner of domain space. If x or y
-            are not given, a value is inferred. For instance, 'left-domain'
-            corresponds to the lower-left hand corner of the simulation domain,
-            'center-domain' corresponds to the center of the simulation domain,
-            or 'center-window' for the center of the plot window. In the event
-            that none of these options place the origin in a desired location,
-            a sequence of tuples and a string specifying the
-            coordinate space can be given. If plain numeric types are input,
-            units of `code_length` are assumed. Further examples:
+           The location of the origin of the plot coordinate system. This
+           is typically represented by a '-' separated string or a tuple of
+           strings. In the first index the y-location is given by 'lower',
+           'upper', or 'center'. The second index is the x-location, given as
+           'left', 'right', or 'center'. Finally, whether the origin is
+           applied in 'domain' space, plot 'window' space or 'native'
+           simulation coordinate system is given. For example, both
+           'upper-right-domain' and ['upper', 'right', 'domain'] place the
+           origin in the upper right hand corner of domain space. If x or y
+           are not given, a value is inferred. For instance, 'left-domain'
+           corresponds to the lower-left hand corner of the simulation domain,
+           'center-domain' corresponds to the center of the simulation domain,
+           or 'center-window' for the center of the plot window. In the event
+           that none of these options place the origin in a desired location,
+           a sequence of tuples and a string specifying the
+           coordinate space can be given. If plain numeric types are input,
+           units of `code_length` are assumed. Further examples:
 
-         ===============================================    ==================================
-         format                                             example
-         ===============================================    ==================================
-         '{space}'                                          'domain'
-         '{xloc}-{space}'                                   'left-window'
-         '{yloc}-{space}'                                   'upper-domain'
-         '{yloc}-{xloc}-{space}'                            'lower-right-window'
-         ('{space}',)                                       ('window',)
-         ('{xloc}', '{space}')                              ('right', 'domain')
-         ('{yloc}', '{space}')                              ('lower', 'window')
-         ('{yloc}', '{xloc}', '{space}')                    ('lower', 'right', 'window')
-         ((yloc, '{unit}'), (xloc, '{unit}'), '{space}')    ((0.5, 'm'), (0.4, 'm'), 'window')
-         (xloc, yloc, '{space}')                            (0.23, 0.5, 'domain')
-         ===============================================    ==================================
-
+           ===============================================    ==================================
+           format                                             example
+           ===============================================    ==================================
+           '{space}'                                          'domain'
+           '{xloc}-{space}'                                   'left-window'
+           '{yloc}-{space}'                                   'upper-domain'
+           '{yloc}-{xloc}-{space}'                            'lower-right-window'
+           ('{space}',)                                       ('window',)
+           ('{xloc}', '{space}')                              ('right', 'domain')
+           ('{yloc}', '{space}')                              ('lower', 'window')
+           ('{yloc}', '{xloc}', '{space}')                    ('lower', 'right', 'window')
+           ((yloc, '{unit}'), (xloc, '{unit}'), '{space}')    ((0.5, 'm'), (0.4, 'm'), 'window')
+           (xloc, yloc, '{space}')                            (0.23, 0.5, 'domain')
+           ===============================================    ==================================
         """
         self.origin = origin
         return self
@@ -471,20 +470,19 @@ class PlotWindow(ImagePlotContainer):
 
         Parameters
         ----------
-        mpl_proj : string, tuple
-            if passed as a string, mpl_proj is the specified projection type,
-            if passed as a tuple, then tuple will take the form of
-            ("ProjectionType", (args)) or ("ProjectionType", (args), {kwargs})
-            Valid projection type options include:
-                'PlateCarree', 'LambertConformal', 'LabmbertCylindrical',
-                'Mercator', 'Miller', 'Mollweide', 'Orthographic',
-                'Robinson', 'Stereographic', 'TransverseMercator',
-                'InterruptedGoodeHomolosine', 'RotatedPole', 'OGSB',
-                'EuroPP', 'Geostationary', 'Gnomonic', 'NorthPolarStereo',
-                'OSNI', 'SouthPolarStereo', 'AlbersEqualArea',
-                'AzimuthalEquidistant', 'Sinusoidal', 'UTM',
-                'NearsidePerspective', 'LambertAzimuthalEqualArea'
 
+        mpl_proj : string or tuple
+           if passed as a string, mpl_proj is the specified projection type,
+           if passed as a tuple, then tuple will take the form of
+           ``("ProjectionType", (args))`` or ``("ProjectionType", (args), {kwargs})``
+           Valid projection type options include: 'PlateCarree', 'LambertConformal', 'LabmbertCylindrical',
+           'Mercator', 'Miller', 'Mollweide', 'Orthographic',
+           'Robinson', 'Stereographic', 'TransverseMercator',
+           'InterruptedGoodeHomolosine', 'RotatedPole', 'OGSB',
+           'EuroPP', 'Geostationary', 'Gnomonic', 'NorthPolarStereo',
+           'OSNI', 'SouthPolarStereo', 'AlbersEqualArea',
+           'AzimuthalEquidistant', 'Sinusoidal', 'UTM',
+           'NearsidePerspective', 'LambertAzimuthalEqualArea'
 
         Examples
         --------
@@ -868,8 +866,12 @@ class PWViewerMPL(PlotWindow):
             axis_index = self.data_source.axis
 
             xc, yc = self._setup_origin()
-            if self.ds.unit_system.name.startswith("us"):
-                # this should happen only if the dataset was initialized with argument unit_system="code"
+            if self.ds.unit_system.name.startswith("us") or self.ds.no_cgs_equiv_length:
+                # this should happen only if the dataset was initialized with
+                # argument unit_system="code" or if it's set to have no CGS
+                # equivalent.  This only needs to happen here in the specific
+                # case that we're doing a computationally intense operation
+                # like using cartopy, but it prevents crashes in that case.
                 (unit_x, unit_y) = ('code_length', 'code_length')
             elif self._axes_unit_names is None:
                 unit = self.ds.get_smallest_appropriate_unit(
@@ -1042,7 +1044,7 @@ class PWViewerMPL(PlotWindow):
             # x-y axes minorticks
             if f not in self._minorticks:
                 self._minorticks[f] = True
-            if self._minorticks[f] is True:
+            if self._minorticks[f]:
                 self.plots[f].axes.minorticks_on()
             else:
                 self.plots[f].axes.minorticks_off()
@@ -1050,26 +1052,38 @@ class PWViewerMPL(PlotWindow):
             # colorbar minorticks
             if f not in self._cbar_minorticks:
                 self._cbar_minorticks[f] = True
-            if (self._cbar_minorticks[f] is True and MPL_VERSION < LooseVersion('2.0.0')
-                or self._field_transform[f] == symlog_transform):
+
+            if self._cbar_minorticks[f]:
+                vmin = np.float64(self.plots[f].cb.norm.vmin)
+                vmax = np.float64(self.plots[f].cb.norm.vmax)
+
                 if self._field_transform[f] == linear_transform:
                     self.plots[f].cax.minorticks_on()
-                else:
-                    vmin = np.float64( self.plots[f].cb.norm.vmin )
-                    vmax = np.float64( self.plots[f].cb.norm.vmax )
-                    if self._field_transform[f] == log_transform:
-                        mticks = self.plots[f].image.norm( get_log_minorticks(vmin, vmax) )
-                    else: # symlog_transform
-                        flinthresh = 10**np.floor( np.log10( self.plots[f].cb.norm.linthresh ) )
-                        mticks = self.plots[f].image.norm( get_symlog_minorticks(flinthresh, vmin, vmax) )
+                
+                elif self._field_transform[f] == symlog_transform:
+                    flinthresh = 10**np.floor(np.log10(self.plots[f].cb.norm.linthresh))
+                    mticks = self.plots[f].image.norm(get_symlog_minorticks(flinthresh, vmin, vmax))
                     self.plots[f].cax.yaxis.set_ticks(mticks, minor=True)
-            else:
+
+                elif self._field_transform[f] == log_transform:
+                    if MPL_VERSION >= LooseVersion('3.0.0'):
+                        self.plots[f].cax.minorticks_on()
+                        self.plots[f].cax.xaxis.set_visible(False)
+                    else:
+                        mticks = self.plots[f].image.norm(get_log_minorticks(vmin, vmax))
+                        self.plots[f].cax.yaxis.set_ticks(mticks, minor=True)
+
+                else:
+                    mylog.error("Unable to draw cbar minorticks for field {} with transform {} ".format(f, self._field_transform[f]))
+                    self._cbar_minorticks[f] = False
+
+            if not self._cbar_minorticks[f]:
                 self.plots[f].cax.minorticks_off()
 
-            if draw_axes is False:
+            if not draw_axes:
                 self.plots[f]._toggle_axes(draw_axes, draw_frame)
 
-            if draw_colorbar is False:
+            if not draw_colorbar:
                 self.plots[f]._toggle_colorbar(draw_colorbar)
 
         self._set_font_properties()
@@ -1262,7 +1276,7 @@ class AxisAlignedSlicePlot(PWViewerMPL):
         if field_parameters is None:
             field_parameters = {}
 
-        if ds.geometry == "spherical" or ds.geometry == "cylindrical":
+        if ds.geometry in ("spherical", "cylindrical", "geographic", "internal_geographic"):
             mylog.info("Setting origin='native' for %s geometry." % ds.geometry)
             origin = 'native'
 
@@ -1437,6 +1451,9 @@ class ProjectionPlot(PWViewerMPL):
                  method = "integrate", proj_style = None, window_size=8.0,
                  aspect=None):
         axis = fix_axis(axis, ds)
+        if ds.geometry in ("spherical", "cylindrical", "geographic", "internal_geographic"):
+            mylog.info("Setting origin='native' for %s geometry." % ds.geometry)
+            origin = 'native'
         # proj_style is deprecated, but if someone specifies then it trumps
         # method.
         if proj_style is not None:
@@ -1463,6 +1480,7 @@ class ProjectionPlot(PWViewerMPL):
                 proj.weight_field = proj._determine_fields(weight_field)[0]
             else:
                 proj.weight_field = weight_field
+            proj.center = center
         else:
             proj = ds.proj(fields, axis, weight_field=weight_field,
                            center=center, data_source=data_source,
@@ -1788,6 +1806,11 @@ class WindowPlotMPL(ImagePlotMPL):
         self.image.axes.yaxis.set_major_formatter(formatter)
         if cbname == 'linear':
             self.cb.formatter.set_scientific(True)
+            try:
+                self.cb.formatter.set_useMathText(True)
+            except AttributeError:
+                # this is only available in mpl > 2.1
+                pass
             self.cb.formatter.set_powerlimits((-2, 3))
             self.cb.update_ticks()
 

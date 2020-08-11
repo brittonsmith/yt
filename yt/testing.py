@@ -40,6 +40,7 @@ from numpy.random import RandomState
 from yt.convenience import load
 from yt.units.yt_array import YTArray, YTQuantity
 from yt.utilities.exceptions import YTUnitOperationError
+import yt
 
 ANSWER_TEST_TAG = "answer_test"
 # Expose assert_true and assert_less_equal from unittest.TestCase
@@ -460,7 +461,7 @@ def construct_octree_mask(prng=RandomState(0x1d3d3d3), refined=None):
 
     if refined in (None, True):
         refined = [True]
-    if refined is False:
+    if not refined:
         refined = [False]
         return refined
 
@@ -503,6 +504,32 @@ def fake_octree_ds(prng=RandomState(0x1d3d3d3), refined=None, quantities=None,
                      over_refine_factor=over_refine_factor,
                      unit_system=unit_system)
     return ds
+
+def add_noise_fields(ds):
+    """Add 4 classes of noise fields to a dataset"""
+    prng = RandomState(0x4d3d3d3)
+    def _binary_noise(field, data):
+        """random binary data"""
+        res = prng.random_integers(0, 1, data.size).astype("float64")
+        return res
+
+    def _positive_noise(field, data):
+        """random strictly positive data"""
+        return prng.random_sample(data.size) + 1e-16
+
+    def _negative_noise(field, data):
+        """random negative data"""
+        return - prng.random_sample(data.size)
+
+    def _even_noise(field, data):
+        """random data with mixed signs"""
+        return 2 * prng.random_sample(data.size) - 1
+
+    ds.add_field("noise0", _binary_noise, sampling_type="cell")
+    ds.add_field("noise1", _positive_noise, sampling_type="cell")
+    ds.add_field("noise2", _negative_noise, sampling_type="cell")
+    ds.add_field("noise3", _even_noise, sampling_type="cell")
+
 
 def expand_keywords(keywords, full=False):
     """
@@ -1151,8 +1178,22 @@ def requires_backend(backend):
     Decorated function or null function
 
     """
+    import pytest
     def ffalse(func):
-        return lambda: None
+        # returning a lambda : None causes an error when using pytest. Having
+        # a function (skip) that returns None does work, but pytest marks the
+        # test as having passed, which seems bad, since it wasn't actually run.
+        # Using pytest.skip() means that a change to test_requires_backend was
+        # needed since None is no longer returned, so we check for the skip
+        # exception in the xfail case for that test
+        def skip(*args, **kwargs):
+            msg = "`{}` backend not found, skipping: `{}`".format(backend, func.__name__)
+            print(msg)
+            pytest.skip(msg)
+        if yt._called_from_pytest:
+            return skip
+        else:
+            return lambda : None
 
     def ftrue(func):
         return func

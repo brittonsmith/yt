@@ -6,7 +6,7 @@ Loading Data
 This section contains information on how to load data into yt, as well as
 some important caveats about different data formats.
 
-.. _loading-amrvac-data
+.. _loading-amrvac-data:
 
 AMRVAC Data
 -----------
@@ -32,6 +32,7 @@ geometry flag is not found.  For older datfiles however it is possible
 to provide it externally with the ``override_geometry`` parameter.
 
 .. code-block:: python
+
   # examples
   ds = yt.load("output0010.dat", override_geometry="polar")
   ds = yt.load("output0010.dat", override_geometry="cartesian")
@@ -42,7 +43,7 @@ VS ``theta`` 2D plots in polar geometries (for example), but this may
 produce unpredictable behaviour and comes with no guarantee.
 
 A ``ndim``-long ``periodic`` boolean array was also added to improve
-comptatibility with yt. See http://amrvac.org/md_doc_fileformat.html
+compatibility with yt. See http://amrvac.org/md_doc_fileformat.html
 for details.
 
 .. rubric:: Auto-setup for derived fields
@@ -52,18 +53,20 @@ pressure, and sound speed. To see a complete list of fields that are defined aft
 loading, one can simply type
 
 .. code-block:: python
-    print(ds.derived_field_list)
+
+  print(ds.derived_field_list)
 
 Note that for adiabatic (magneto-)hydrodynamics, i.e. `(m)hd_energy = False` in
 AMRVAC, additional input data is required in order to setup some of these fields.
 This is done by passing the corresponding parfile(s) at load time
 
 .. code-block:: python
-    # example using a single parfile
-    ds = yt.load("output0010.dat", parfiles="amrvac.par")
 
-    # ... or using multiple parfiles
-    ds = yt.load("output0010.dat", parfiles=["amrvac.par", "modifier.par"])
+  # example using a single parfile
+  ds = yt.load("output0010.dat", parfiles="amrvac.par")
+
+  # ... or using multiple parfiles
+  ds = yt.load("output0010.dat", parfiles=["amrvac.par", "modifier.par"])
 
 In case more than one parfile is passed, yt will create a single namelist by
 replicating AMRVAC's rules (see "Using multiple par files"
@@ -759,7 +762,7 @@ a dataset loaded as
    ds = yt.load("MOOSE_sample_data/mps_out.e")
 
 will not include the displacements in the vertex positions. The displacements can
-be turned on separately for each mesh in the file by passing in a a tuple of
+be turned on separately for each mesh in the file by passing in a tuple of
 (scale, offset) pairs for the meshes you want to enable displacements for.
 For example, the following code snippet turns displacements on for the second
 mesh, but not the first:

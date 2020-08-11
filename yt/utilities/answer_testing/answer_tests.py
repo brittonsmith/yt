@@ -206,7 +206,7 @@ def sph_answer(ds, ds_str_repr, ds_nparticles, field, weight, ds_obj, axis):
         particle_type = True
     else:
         particle_type = False
-    if particle_type is False:
+    if not particle_type:
         ppv_hd = pixelized_projection_values(ds, axis, field, weight, ds_obj)
         hex_digests['pixelized_projection_values'] = ppv_hd
     fv_hd = field_values(ds, field, ds_obj, particle_type=particle_type)
@@ -283,7 +283,7 @@ def light_cone_projection(parameter_file, simulation_type):
     lc.project_light_cone(
         (600.0, "arcmin"), (60.0, "arcsec"), "density",
         weight_field=None, save_stack=True)
-    fh = h5py.File("LC/LightCone.h5")
+    fh = h5py.File("LC/LightCone.h5", mode="r")
     data = fh["density_None"].value
     units = fh["density_None"].attrs["units"]
     assert units == "g/cm**2"
