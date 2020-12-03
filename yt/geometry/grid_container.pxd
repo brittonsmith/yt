@@ -5,25 +5,24 @@ Matching points on the grid to specific grids
 
 """
 
-#-----------------------------------------------------------------------------
-# Copyright (c) 2013, yt Development Team.
-#
-# Distributed under the terms of the Modified BSD License.
-#
-# The full license is in the file COPYING.txt, distributed with this software.
-#-----------------------------------------------------------------------------
 
 import numpy as np
-cimport numpy as np
-cimport cython
 
-from libc.stdlib cimport malloc, free
+cimport cython
+cimport grid_visitors
+cimport numpy as np
+from grid_visitors cimport (
+    GridTreeNode,
+    GridTreeNodePadded,
+    GridVisitorData,
+    grid_visitor_function,
+)
+from libc.stdlib cimport free, malloc
+
 from yt.geometry.selection_routines cimport SelectorObject, _ensure_code
-from yt.utilities.lib.fp_utils cimport iclip
-from grid_visitors cimport GridTreeNode, GridVisitorData, \
-    grid_visitor_function, GridTreeNodePadded
-cimport grid_visitors 
 from yt.utilities.lib.bitarray cimport bitarray
+from yt.utilities.lib.fp_utils cimport iclip
+
 
 cdef class GridTree:
     cdef GridTreeNode *grids

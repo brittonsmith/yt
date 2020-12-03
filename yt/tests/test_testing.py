@@ -1,19 +1,9 @@
-"""
-Tests for yt.testing
-"""
-#-----------------------------------------------------------------------------
-# Copyright (c) 2018, yt Development Team.
-#
-# Distributed under the terms of the Modified BSD License.
-#
-# The full license is in the file COPYING.txt, distributed with this software.
-#-----------------------------------------------------------------------------
 import matplotlib
 import numpy as np
 import pytest
 
+from yt.config import ytcfg
 from yt.testing import assert_equal, requires_backend
-import yt
 
 
 def test_requires_backend():
@@ -29,7 +19,7 @@ def test_requires_backend():
         return True
 
     assert_equal(plot_b(), True)
-    if not yt._called_from_pytest:
+    if not ytcfg.getboolean("yt", "__withinpytest"):
         assert_equal(plot_a(), None)
     else:
         # NOTE: This doesn't actually work. pytest.skip() doesn't actually

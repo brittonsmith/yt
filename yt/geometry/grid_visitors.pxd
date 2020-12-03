@@ -6,15 +6,9 @@ Grid visitor definitions file
 
 """
 
-#-----------------------------------------------------------------------------
-# Copyright (c) 2015, yt Development Team.
-#
-# Distributed under the terms of the Modified BSD License.
-#
-# The full license is in the file COPYING.txt, distributed with this software.
-#-----------------------------------------------------------------------------
 
 cimport numpy as np
+
 
 cdef struct GridTreeNode:
     np.int32_t num_children

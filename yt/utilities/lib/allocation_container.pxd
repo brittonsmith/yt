@@ -5,16 +5,10 @@ An allocation container and memory pool
 
 """
 
-#-----------------------------------------------------------------------------
-# Copyright (c) 2016, yt Development Team.
-#
-# Distributed under the terms of the Modified BSD License.
-#
-# The full license is in the file COPYING.txt, distributed with this software.
-#-----------------------------------------------------------------------------
 
 cimport numpy as np
-from libc.stdlib cimport malloc, free, realloc
+from libc.stdlib cimport free, malloc, realloc
+
 
 cdef struct AllocationContainer:
     np.uint64_t n
