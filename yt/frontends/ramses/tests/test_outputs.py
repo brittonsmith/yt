@@ -59,6 +59,15 @@ def test_RAMSESDataset():
 
 
 @requires_file(output_00080)
+def test_RAMSES_alternative_load():
+    # Test that we can load a RAMSES dataset by giving it the folder name,
+    # the info file name or an amr file name
+    base_dir, info_file_fname = os.path.split(output_00080)
+    for fname in (base_dir, os.path.join(base_dir, "amr_00080.out00001")):
+        assert isinstance(data_dir_load(fname), RAMSESDataset)
+
+
+@requires_file(output_00080)
 def test_units_override():
     units_override_check(output_00080)
 
@@ -191,6 +200,14 @@ def test_ramses_rt():
         )
 
     for field in special_fields:
+        assert field in ds.derived_field_list
+        ad[field]
+
+    # Test the creation of rt fields
+    rt_fields = [("rt", "photon_density_1")] + [
+        ("rt", f"photon_flux_{d}_1") for d in "xyz"
+    ]
+    for field in rt_fields:
         assert field in ds.derived_field_list
         ad[field]
 
@@ -507,7 +524,7 @@ def test_ramses_empty_record():
 def test_namelist_reading():
     ds = data_dir_load(ramses_new_format)
     namelist_fname = os.path.join(ds.directory, "namelist.txt")
-    with open(namelist_fname, "r") as f:
+    with open(namelist_fname) as f:
         ref = f90nml.read(f)
 
     nml = ds.parameters["namelist"]

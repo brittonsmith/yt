@@ -8,7 +8,7 @@ from yt.funcs import (
     get_brewer_cmap,
     get_image_suffix,
     get_interactivity,
-    iterable,
+    is_sequence,
     matplotlib_style_context,
     mylog,
 )
@@ -53,6 +53,7 @@ class CallbackWrapper:
         self.ds = frb.ds
         self.xlim = viewer.xlim
         self.ylim = viewer.ylim
+        self._axes_unit_names = viewer._axes_unit_names
         if "OffAxisSlice" in viewer._plot_type:
             self._type_name = "CuttingPlane"
         else:
@@ -64,9 +65,7 @@ class CallbackWrapper:
 
 
 class PlotMPL:
-    """A base class for all yt plots made using matplotlib, that is backend independent.
-
-    """
+    """A base class for all yt plots made using matplotlib, that is backend independent."""
 
     def __init__(self, fsize, axrect, figure, axes):
         """Initialize PlotMPL class"""
@@ -74,7 +73,7 @@ class PlotMPL:
 
         self._plot_valid = True
         if figure is None:
-            if not iterable(fsize):
+            if not is_sequence(fsize):
                 fsize = (fsize, fsize)
             self.figure = matplotlib.figure.Figure(figsize=fsize, frameon=True)
         else:
@@ -200,13 +199,11 @@ class PlotMPL:
 
 
 class ImagePlotMPL(PlotMPL):
-    """A base class for yt plots made using imshow
-
-    """
+    """A base class for yt plots made using imshow"""
 
     def __init__(self, fsize, axrect, caxrect, zlim, figure, axes, cax):
         """Initialize ImagePlotMPL class object"""
-        super(ImagePlotMPL, self).__init__(fsize, axrect, figure, axes)
+        super().__init__(fsize, axrect, figure, axes)
         self.zmin, self.zmax = zlim
         if cax is None:
             self.cax = self.figure.add_axes(caxrect)
@@ -306,16 +303,19 @@ class ImagePlotMPL(PlotMPL):
                     )
                 )
             elif np.nanmax(data) <= 0.0:
-                yticks = list(
-                    -(
-                        10
-                        ** np.arange(
-                            np.floor(np.log10(-np.nanmin(data))),
-                            np.rint(np.log10(cblinthresh)) - 1,
-                            -1,
+                yticks = (
+                    list(
+                        -(
+                            10
+                            ** np.arange(
+                                np.floor(np.log10(-np.nanmin(data))),
+                                np.rint(np.log10(cblinthresh)) - 1,
+                                -1,
+                            )
                         )
                     )
-                ) + [np.nanmax(data).v]
+                    + [np.nanmax(data).v]
+                )
             else:
                 yticks = (
                     list(
@@ -346,7 +346,7 @@ class ImagePlotMPL(PlotMPL):
     def _get_best_layout(self):
 
         # Ensure the figure size along the long axis is always equal to _figure_size
-        if iterable(self._figure_size):
+        if is_sequence(self._figure_size):
             x_fig_size = self._figure_size[0]
             y_fig_size = self._figure_size[1]
         else:
@@ -456,7 +456,7 @@ class ImagePlotMPL(PlotMPL):
         self.figure.set_size_inches(*size)
 
     def _get_labels(self):
-        labels = super(ImagePlotMPL, self)._get_labels()
+        labels = super()._get_labels()
         cbax = self.cb.ax
         labels += cbax.yaxis.get_ticklabels()
         labels += [cbax.yaxis.label, cbax.yaxis.get_offset_text()]
