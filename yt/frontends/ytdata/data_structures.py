@@ -162,6 +162,8 @@ class SavedDataset(Dataset):
 class YTDataset(SavedDataset):
     """Base dataset class for all ytdata datasets."""
 
+    minimal_fields = False
+
     _con_attrs = (
         "cosmological_simulation",
         "current_time",
@@ -191,6 +193,8 @@ class YTDataset(SavedDataset):
         self.derived_field_list = []
         self.filtered_particle_types = []
         self.field_info = self._field_info_class(self, self.field_list)
+        if self.minimal_fields:
+            return
         self.coordinates.setup_fields(self.field_info)
         self.field_info.setup_fluid_fields()
         for ptype in self.particle_types:
@@ -781,7 +785,8 @@ class YTProfileDataset(YTNonspatialDataset):
 
     fluid_types = ("data", "gas", "standard_deviation")
 
-    def __init__(self, filename, unit_system="cgs"):
+    def __init__(self, filename, unit_system="cgs", minimal_fields=False):
+        self.minimal_fields = minimal_fields
         super().__init__(filename, unit_system=unit_system)
 
     _profile = None
