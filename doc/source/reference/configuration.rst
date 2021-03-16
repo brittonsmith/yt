@@ -87,6 +87,7 @@ Here is an example script, where we adjust the logging at startup:
 .. code-block:: python
 
    import yt
+
    yt.set_log_level(1)
 
    ds = yt.load("my_data0001")
@@ -107,8 +108,6 @@ used internally.
 * ``default_colormap`` (default: ``arbre``): What colormap should be used by
   default for yt-produced images?
 * ``plugin_filename``  (default ``my_plugins.py``) The name of our plugin file.
-* ``log_file`` (default: ``False``): Should we output to a log file in the
-  filesystem?
 * ``log_level`` (default: ``20``): What is the threshold (0 to 50) for
   outputting log files?
 * ``test_data_dir`` (default: ``/does/not/exist``): The default path the
@@ -187,8 +186,9 @@ For example, if I created a plugin file containing:
 
    def _myfunc(field, data):
        return np.random.random(data["density"].shape)
-   add_field('random', function=_myfunc,
-             dimensions='dimensionless', units='auto')
+
+
+   add_field("random", function=_myfunc, dimensions="dimensionless", units="auto")
 
 then all of my data objects would have access to the field ``random``.
 
@@ -200,8 +200,9 @@ modules:
 
    import os
 
-   HOMEDIR="/home/username/"
-   RUNDIR="/scratch/runs/"
+   HOMEDIR = "/home/username/"
+   RUNDIR = "/scratch/runs/"
+
 
    def load_run(fn):
        if not os.path.exists(RUNDIR + fn):
@@ -215,6 +216,7 @@ use this function:
 .. code-block:: python
 
    import yt
+
    yt.enable_plugins()
 
    my_run = yt.load_run("hotgasflow/DD0040/DD0040")

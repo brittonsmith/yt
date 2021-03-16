@@ -145,7 +145,6 @@ def simulation(fn, simulation_type, find_outputs=False):
     issue_deprecation_warning(
         "yt.simulation is a deprecated alias for yt.load_simulation"
         "and will be removed in a future version of yt.",
-        deprecation_id="loaders:yt.simulation",
         since="4.0.0",
         removal="4.1.0",
     )
@@ -259,7 +258,6 @@ def load_uniform_grid(
             "dict. The number of particles is "
             "determined from the sizes of the "
             "particle fields.",
-            deprecation_id="loaders:number_of_particles",
             since="4.0.0",
             removal="4.1.0",
         )
@@ -488,7 +486,6 @@ def load_amr_grids(
                 "dict. The number of particles is "
                 "determined from the sizes of the "
                 "particle fields.",
-                deprecation_id="loaders:number_of_particles",
                 since="4.0.0",
                 removal="4.1.0",
             )
@@ -1266,7 +1263,7 @@ def load_unstructured_mesh(
     sds._node_fields = flatten([[f[1] for f in m] for m in node_data if m])
     sds._elem_fields = flatten([[f[1] for f in m] for m in elem_data if m])
     sds.default_field = [f for f in sds.field_list if f[0] == "connect1"][-1]
-
+    sds.default_fluid_type = sds.default_field[0]
     return sds
 
 

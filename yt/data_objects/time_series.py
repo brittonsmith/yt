@@ -194,22 +194,12 @@ class DatasetSeries:
         pattern = outputs
         epattern = os.path.expanduser(pattern)
         data_dir = ytcfg.get("yt", "test_data_dir")
-        # if not match if found from the current work dir,
+        # if no match if found from the current work dir,
         # we try to match the pattern from the test data dir
         file_list = glob.glob(epattern) or glob.glob(os.path.join(data_dir, epattern))
         if not file_list:
             raise FileNotFoundError(f"No match found for pattern : {pattern}")
         return sorted(file_list)
-
-    def __iter__(self):
-        # We can make this fancier, but this works
-        for o in self._pre_outputs:
-            try:
-                ds = self._load(o, **self.kwargs)
-                self._setup_function(ds)
-                yield ds
-            except TypeError:
-                yield o
 
     def __getitem__(self, key):
         if isinstance(key, slice):
@@ -220,11 +210,9 @@ class DatasetSeries:
                 self._pre_outputs[key], parallel=self.parallel, **self.kwargs
             )
         o = self._pre_outputs[key]
-        try:
+        if isinstance(o, (str, os.PathLike)):
             o = self._load(o, **self.kwargs)
             self._setup_function(o)
-        except TypeError:
-            pass
         return o
 
     def __len__(self):
@@ -409,7 +397,6 @@ class DatasetSeries:
         issue_deprecation_warning(
             "DatasetSeries.from_filenames() is deprecated and will be removed "
             "in a future version of yt. Use DatasetSeries() directly.",
-            deprecation_id="time_series:from_filenames",
             since="4.0.0",
             removal="4.1.0",
         )

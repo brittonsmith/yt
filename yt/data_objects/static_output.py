@@ -127,6 +127,7 @@ class Dataset(abc.ABC):
     _particle_type_counts = None
     _proj_type = "quad_proj"
     _ionization_label_format = "roman_numeral"
+    fields_detected = False
 
     # these are set in self._parse_parameter_file()
     domain_left_edge = MutableAttribute(True)
@@ -261,7 +262,6 @@ class Dataset(abc.ABC):
             "Dataset.periodicity should not be overriden manually. "
             "In the future, this will become an error. "
             "Use `Dataset.force_periodicity` instead.",
-            deprecation_id="static_output:manual-set-periodicity",
             since="4.0.0",
             removal="4.1.0",
         )
@@ -603,6 +603,9 @@ class Dataset(abc.ABC):
         self.field_dependencies.update(deps)
         self.fields = FieldTypeContainer(self)
         self.index.field_list = sorted(self.field_list)
+        # Now that we've detected the fields, set this flag so that
+        # deprecated fields will be logged if they are used
+        self.fields_detected = True
         self._last_freq = (None, None)
 
     def set_field_label_format(self, format_property, value):
@@ -930,9 +933,10 @@ class Dataset(abc.ABC):
         if to_array:
             if any(x.units.is_dimensionless for x in coords):
                 mylog.warning(
-                    f"dataset {self} has angular coordinates. "
+                    "dataset `%s` has angular coordinates. "
                     "Use 'to_array=False' to preserve "
-                    "dimensionality in each coordinate."
+                    "dimensionality in each coordinate.",
+                    str(self),
                 )
 
             # force conversion to length
@@ -1683,7 +1687,6 @@ class Dataset(abc.ABC):
             "visualization machinery now treats SPH fields properly by smoothing onto "
             "pixel locations. See this page to learn more: "
             "https://yt-project.org/doc/yt4differences.html",
-            deprecation_id="static_output:add_smoothed_particle_field",
             since="4.0.0",
             removal="4.1.0",
         )
@@ -1733,7 +1736,6 @@ class Dataset(abc.ABC):
             issue_deprecation_warning(
                 "keyword argument 'input_field' is deprecated in favor of 'fields' "
                 "and will be removed in a future version of yt.",
-                deprecation_id="static_output:input_field",
                 since="4.0.0",
                 removal="4.1.0",
             )

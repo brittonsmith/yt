@@ -13,7 +13,6 @@ ytcfg_defaults["yt"] = dict(
     serialize=False,
     only_deserialize=False,
     time_functions=False,
-    log_file=False,
     colored_logs=False,
     suppress_stream_logging=False,
     stdout_stream_logging=False,
@@ -64,22 +63,34 @@ ytcfg_defaults["yt"] = dict(
         topcomm_parallel_size=1,
         command_line=False,
     ),
-    # Options for developers
-    developers=dict(
-        # List of warnings to ignore
-        ignore_warnings=[]
-    ),
 )
 
 
-CONFIG_DIR = os.environ.get(
-    "XDG_CONFIG_HOME", os.path.join(os.path.expanduser("~"), ".config", "yt")
-)
-if not os.path.exists(CONFIG_DIR):
-    try:
-        os.makedirs(CONFIG_DIR)
-    except OSError:
-        warnings.warn("unable to create yt config directory")
+def config_dir():
+    config_root = os.environ.get(
+        "XDG_CONFIG_HOME", os.path.join(os.path.expanduser("~"), ".config")
+    )
+    conf_dir = os.path.join(config_root, "yt")
+
+    if not os.path.exists(conf_dir):
+        try:
+            os.makedirs(conf_dir)
+        except OSError:
+            warnings.warn("unable to create yt config directory")
+    return conf_dir
+
+
+def old_config_file():
+    return os.path.join(config_dir(), "ytrc")
+
+
+def old_config_dir():
+    return os.path.join(os.path.expanduser("~"), ".yt")
+
+
+# For backward compatibility, do not use these vars internally in yt
+CONFIG_DIR = config_dir()
+_OLD_CONFIG_FILE = old_config_file()
 
 
 class YTConfig:
@@ -173,45 +184,34 @@ class YTConfig:
 
     @staticmethod
     def get_global_config_file():
-        return os.path.join(CONFIG_DIR, "yt.toml")
+        return os.path.join(config_dir(), "yt.toml")
 
     @staticmethod
     def get_local_config_file():
         return os.path.join(os.path.abspath(os.curdir), "yt.toml")
 
 
-OLD_CONFIG_FILE = os.path.join(CONFIG_DIR, "ytrc")
 _global_config_file = YTConfig.get_global_config_file()
 _local_config_file = YTConfig.get_local_config_file()
 
-warn_about_both_config_present = False
-if os.path.exists(OLD_CONFIG_FILE):
-    if not os.path.exists(_global_config_file):
-        # We have an issue here: when calling from the command line,
-        # we do not want this to exit, as it would prevent `yt config migrate`
-        # from running. The issue is that yt.config (this file) is imported
-        # from yt.__init__, which is imported *before* yt.utilities.configure
-        # is executed, so the latter cannot set some internal variable before
-        # we arrive here.
-        # The workaround here relies on inspecting the call stack and hopefully
-        # detect we were called from the CLI.
-        import inspect
-
-        stack = inspect.stack()
-        if len(stack) < 2 or stack[-2].function != "importlib_load_entry_point":
-            issue_deprecation_warning(
-                f"The configuration file {OLD_CONFIG_FILE} is deprecated. "
-                f"Please migrate your config to {_global_config_file} by running: "
-                "'yt config migrate'",
-                deprecation_id="config:migration",
-                since="4.0.0",
-                removal="4.1.0",
-            )
-            raise SystemExit
+if os.path.exists(old_config_file()):
+    if os.path.exists(_global_config_file):
+        issue_deprecation_warning(
+            f"The configuration file {old_config_file()} is deprecated in "
+            f"favor of {_global_config_file}. Currently, both are present. "
+            "Please manually remove the deprecated one to silence "
+            "this warning.",
+            since="4.0.0",
+            removal="4.1.0",
+        )
     else:
-        # We keep the information both files are present and warn afterwards,
-        # unless the config explicitely asks for it to be turned off
-        warn_about_both_config_present = True
+        issue_deprecation_warning(
+            f"The configuration file {_OLD_CONFIG_FILE} is deprecated. "
+            f"Please migrate your config to {_global_config_file} by running: "
+            "'yt config migrate'",
+            since="4.0.0",
+            removal="4.1.0",
+        )
 
 
 if not os.path.exists(_global_config_file):
@@ -232,16 +232,3 @@ if os.path.exists(_local_config_file):
     ytcfg.read(_local_config_file)
 elif os.path.exists(_global_config_file):
     ytcfg.read(_global_config_file)
-
-# We need to do this *after* the config was read so that devs may
-# deactivate the warnings
-if warn_about_both_config_present:
-    issue_deprecation_warning(
-        f"The configuration file {OLD_CONFIG_FILE} is deprecated in "
-        f"favor of {_global_config_file}. Currently, both are present. "
-        "Please manually remove the deprecated one to silence "
-        "this warning.",
-        deprecation_id="config:both_file_present",
-        since="4.0.0",
-        removal="4.1.0",
-    )

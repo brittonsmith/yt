@@ -436,10 +436,10 @@ class DualEPS:
                 YTQuantity(xlimits[0], "m"),
                 YTQuantity(xlimits[1], "m"),
             )  # unit hardcoded but afaik it is not used anywhere so it doesn't matter
-            if list(plot.axes.ylim.viewvalues())[0][0] is None:
+            if list(plot.axes.ylim.values())[0][0] is None:
                 ylimits = subplot.get_ylim()
             else:
-                ylimits = list(plot.axes.ylim.viewvalues())[0]
+                ylimits = list(plot.axes.ylim.values())[0]
             _yrange = (
                 YTQuantity(ylimits[0], "m"),
                 YTQuantity(ylimits[1], "m"),
@@ -1590,9 +1590,7 @@ def single_plot(
 # =============================================================================
 def return_cmap(cmap=None, label="", range=(0, 1), log=False):
     issue_deprecation_warning(
-        "Deprecated alias. Use return_colormap instead.",
-        deprecation_id="eps_writer:return_cmap",
-        removal="4.1.0",
+        "Deprecated alias. Use return_colormap instead.", removal="4.1.0"
     )
     return return_colormap(cmap=cmap, label=label, crange=range, log=log)
 
