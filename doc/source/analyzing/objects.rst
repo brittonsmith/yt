@@ -167,6 +167,9 @@ dimensions:
 
    ds.r[0.4:0.6]
 
+
+.. _arbitrary-grid-selection:
+
 Selecting Fixed Resolution Regions
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -232,7 +235,7 @@ domain but centered at 0.5 in code units, you can do:
 
    frb = ds.r[0.5, ::1024j, ::1024j]
 
-This `frb` object then can be queried like a normal fixed resolution buffer,
+This ``frb`` object then can be queried like a normal fixed resolution buffer,
 and it will return arrays of shape (1024, 1024).
 
 Making Rays
@@ -731,12 +734,12 @@ Available Derived Quantities
       over an entire data object.  If you want an unweighted average,
       then set your weight to be the field: ``ones``.
 
-**Weighted Variance of a Field**
-    | Class :class:`~yt.data_objects.derived_quantities.WeightedVariance`
-    | Usage: ``weighted_variance(fields, weight)``
-    | The weighted variance of a field (or list of fields)
+**Weighted Standard Deviation of a Field**
+    | Class :class:`~yt.data_objects.derived_quantities.WeightedStandardDeviation`
+    | Usage: ``weighted_standard_deviation(fields, weight)``
+    | The weighted standard deviation of a field (or list of fields)
       over an entire data object and the weighted mean.
-      If you want an unweighted variance, then
+      If you want an unweighted standard deviation, then
       set your weight to be the field: ``ones``.
 
 .. _arbitrary-grid:

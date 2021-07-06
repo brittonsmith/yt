@@ -1,6 +1,5 @@
 import sys
-
-from pkg_resources import parse_version
+from distutils.version import LooseVersion
 
 
 class NotAModule:
@@ -46,7 +45,7 @@ class NotCartopy(NotAModule):
                 "package to be installed. Try installing proj4 and "
                 "geos with your package manager and building shapely "
                 "and cartopy from source with: \n \n "
-                "pip install --no-binary :all: shapely cartopy \n \n"
+                "python -m pip install --no-binary :all: shapely cartopy \n \n"
                 "For further instruction please refer to the "
                 "yt documentation." % self.pkg_name
             )
@@ -234,18 +233,18 @@ _cartopy = cartopy_imports()
 
 class pooch_imports:
     _name = "pooch"
+    _module = None
 
-    _pooch = None
+    def __init__(self):
+        try:
+            import pooch as myself
 
-    @property
-    def pooch(self):
-        if self._pooch is None:
-            try:
-                import pooch as pooch
-            except ImportError:
-                pooch = NotAModule(self._name)
-            self._pooch = pooch
-        return self._pooch
+            self._module = myself
+        except ImportError:
+            self._module = NotAModule(self._name)
+
+    def __getattr__(self, attr):
+        return getattr(self._module, attr)
 
 
 _pooch = pooch_imports()
@@ -361,10 +360,10 @@ class h5py_imports:
         try:
             import h5py
 
-            if parse_version(h5py.__version__) < parse_version("2.4.0"):
+            if LooseVersion(h5py.__version__) < LooseVersion("2.4.0"):
                 self._err = RuntimeError(
                     "yt requires h5py version 2.4.0 or newer, "
-                    'please update h5py with e.g. "pip install -U h5py" '
+                    "please update h5py with e.g. `python -m pip install -U h5py` "
                     "and try again"
                 )
         except ImportError:
@@ -587,7 +586,7 @@ class NotMiniball(NotAModule):
             "This functionality requires the %s package to be installed. "
             "Installation instructions can be found at "
             "https://github.com/weddige/miniball or alternatively you can "
-            "install via `pip install MiniballCpp`."
+            "install via `python -m pip install MiniballCpp`."
         )
         self.error = ImportError(str % self.pkg_name)
 
@@ -646,3 +645,22 @@ class requests_imports:
 
 
 _requests = requests_imports()
+
+
+class pandas_imports:
+    _name = "pandas"
+    _module = None
+
+    def __init__(self):
+        try:
+            import pandas as myself
+
+            self._module = myself
+        except ImportError:
+            self._module = NotAModule(self._name)
+
+    def __getattr__(self, attr):
+        return getattr(self._module, attr)
+
+
+_pandas = pandas_imports()
