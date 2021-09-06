@@ -129,12 +129,16 @@ class Dataset(abc.ABC):
     _particle_type_counts = None
     _proj_type = "quad_proj"
     _ionization_label_format = "roman_numeral"
+    _determined_fields = None
     fields_detected = False
 
     # these are set in self._parse_parameter_file()
     domain_left_edge = MutableAttribute(True)
     domain_right_edge = MutableAttribute(True)
     domain_dimensions = MutableAttribute(True)
+    # the point in index space "domain_left_edge" doesn't necessarily
+    # map to (0, 0, 0)
+    domain_offset = np.zeros(3, dtype="int64")
     _periodicity = MutableAttribute()
     _force_periodicity = False
 
@@ -195,6 +199,7 @@ class Dataset(abc.ABC):
         self.known_filters = self.known_filters or {}
         self.particle_unions = self.particle_unions or {}
         self.field_units = self.field_units or {}
+        self._determined_fields = {}
         self.units_override = self.__class__._sanitize_units_override(units_override)
         self.default_species_fields = default_species_fields
 
