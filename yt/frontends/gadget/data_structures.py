@@ -357,7 +357,7 @@ class GadgetDataset(SPHDataset):
         # We may have an overridden bounding box.
         if self.domain_left_edge is None and hvals["BoxSize"] != 0:
             self.domain_left_edge = np.zeros(3, "float64")
-            self.domain_right_edge = np.ones(3, "float64") * hvals["BoxSize"]
+            self.domain_right_edge = np.ones(3, "float64") * float(hvals["BoxSize"])
 
         self.domain_dimensions = np.ones(3, "int32")
         self._periodicity = (True, True, True)
@@ -373,9 +373,9 @@ class GadgetDataset(SPHDataset):
             only_on_root(mylog.info, "Redshift is not set in Header. Assuming z=0.")
 
         try:
-            self.omega_lambda = hvals["OmegaLambda"]
-            self.omega_matter = hvals["Omega0"]
-            self.hubble_constant = hvals["HubbleParam"]
+            self.omega_lambda = float(hvals["OmegaLambda"])
+            self.omega_matter = float(hvals["Omega0"])
+            self.hubble_constant = float(hvals["HubbleParam"])
         except KeyError:
             # If these are not set it is definitely not a cosmological dataset.
             self.omega_lambda = 0.0
