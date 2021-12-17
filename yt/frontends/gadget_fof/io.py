@@ -43,7 +43,8 @@ class IOHandlerGadgetFOFHDF5(BaseIOHandler):
                 if pcount == 0:
                     continue
                 coords = f[ptype][f"{ptype}Pos"][()].astype("float64")
-                coords = np.resize(coords, (pcount, 3))
+                #coords = np.resize(coords, (pcount, 3))
+                coords = coords.reshape((pcount, 3))
                 yield ptype, coords
 
     def _read_offset_particle_field(self, field, data_file, fh):
@@ -109,6 +110,8 @@ class IOHandlerGadgetFOFHDF5(BaseIOHandler):
                                 if my_div > 1:
                                     findex = int(field[field.rfind("_") + 1 :])
                                     field_data = field_data[:, findex]
+                        si = int(si)
+                        ei = int(ei)
                         data = field_data[si:ei][mask]
                         yield (ptype, field), data
 
@@ -116,8 +119,11 @@ class IOHandlerGadgetFOFHDF5(BaseIOHandler):
         si, ei = data_file.start, data_file.end
         pcount = {
             "Group": data_file.header["Ngroups_ThisFile"],
-            "Subhalo": data_file.header["Nsubgroups_ThisFile"],
         }
+        for dname in ["Nsubgroups_ThisFile", "Nsubhalos_ThisFile"]:
+            if dname in data_file.header:
+                pcount["Subhalo"] = data_file.header[dname]
+                break
         if None not in (si, ei):
             for ptype in pcount:
                 pcount[ptype] = np.clip(pcount[ptype] - si, 0, ei - si)

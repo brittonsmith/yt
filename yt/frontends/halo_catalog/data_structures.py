@@ -45,6 +45,8 @@ class HaloCatalogFile(ParticleFile):
         dw = self.ds.domain_width.to("code_length").v
         pos = self._read_particle_positions(ptype, f=f)
         si, ei = self.start, self.end
+        si = int(si)
+        ei = int(ei)
         if None not in (si, ei):
             pos = pos[si:ei]
 

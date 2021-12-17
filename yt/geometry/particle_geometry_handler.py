@@ -242,7 +242,7 @@ class ParticleIndex(Index):
 
     def _initialize_refined_index(self):
         mask = self.regions.masks.sum(axis=1).astype("uint8")
-        max_npart = max(sum(d.total_particles.values()) for d in self.data_files) * 28
+        max_npart = int(max(sum(d.total_particles.values()) for d in self.data_files) * 28)
         sub_mi1 = np.zeros(max_npart, "uint64")
         sub_mi2 = np.zeros(max_npart, "uint64")
         pb = get_pbar("Initializing refined index", len(self.data_files))
