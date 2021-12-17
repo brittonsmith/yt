@@ -45,7 +45,8 @@ class GadgetFOFParticleIndex(ParticleIndex):
 
         self._halo_index_start = {
             ptype: np.array(
-                [data_file.index_start[ptype] for data_file in self.data_files]
+                [data_file.index_start[ptype] for data_file in self.data_files],
+                dtype=int
             )
             for ptype in self.ds.particle_types_raw
         }
