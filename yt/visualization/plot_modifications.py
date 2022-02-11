@@ -1,11 +1,13 @@
 import re
 import warnings
 from functools import wraps
-from numbers import Number
+from numbers import Integral, Number
+from typing import Any, Dict, Optional, Tuple, Union
 
 import matplotlib
 import numpy as np
 
+from yt._maintenance.deprecation import issue_deprecation_warning
 from yt.data_objects.data_containers import YTDataContainer
 from yt.data_objects.level_sets.clump_handling import Clump
 from yt.data_objects.selection_objects.cut_region import YTCutRegion
@@ -15,7 +17,7 @@ from yt.funcs import is_sequence, mylog, validate_width_tuple
 from yt.geometry.geometry_handler import is_curvilinear
 from yt.geometry.unstructured_mesh_handler import UnstructuredIndex
 from yt.units import dimensions
-from yt.units.yt_array import YTArray, YTQuantity, uhstack
+from yt.units.yt_array import YTArray, YTQuantity, uhstack  # type: ignore
 from yt.utilities.exceptions import YTDataTypeUnsupported
 from yt.utilities.lib.geometry_utils import triangle_plane_intersect
 from yt.utilities.lib.line_integral_convolution import line_integral_convolution_2d
@@ -46,6 +48,24 @@ def _verify_geometry(func):
     return _check_geometry
 
 
+def _validate_factor_tuple(factor) -> Tuple[int, int]:
+    if (
+        is_sequence(factor)
+        and len(factor) == 2
+        and all(isinstance(_, Integral) for _ in factor)
+    ):
+        # - checking for "is_sequence" allows lists, numpy arrays and other containers
+        # - checking for Integral type allows numpy integer types
+        # in any case we return a with strict typing
+        return (int(factor[0]), int(factor[1]))
+    elif isinstance(factor, Integral):
+        return (int(factor), int(factor))
+    else:
+        raise TypeError(
+            f"Expected a single, or a pair of integers, received {factor!r}"
+        )
+
+
 class PlotCallback:
     # _supported_geometries is set by subclasses of PlotCallback to a tuple of
     # strings corresponding to the names of the geometries that a callback
@@ -54,7 +74,7 @@ class PlotCallback:
     # "figure" this is disregarded.  If "force" is included in the tuple, it
     # will *not* check whether or not the coord_system is in axis or figure,
     # and will only look at the geometries.
-    _supported_geometries = None
+    _supported_geometries: Optional[Tuple[str, ...]] = None
 
     def __init_subclass__(cls, *args, **kwargs):
         super().__init_subclass__(*args, **kwargs)
@@ -77,8 +97,11 @@ class PlotCallback:
         """
         if len(coord) == 3:
             if not isinstance(coord, YTArray):
-                coord = plot.data.ds.arr(coord, "code_length")
-            coord.convert_to_units("code_length")
+                coord_copy = plot.data.ds.arr(coord, "code_length")
+            else:
+                # coord is being copied so that if the user has a unyt_array already
+                # we don't change the user's version
+                coord_copy = coord.to("code_length")
             ax = plot.data.axis
             # if this is an on-axis projection or slice, then
             # just grab the appropriate 2 coords for the on-axis view
@@ -87,7 +110,7 @@ class PlotCallback:
                     plot.data.ds.coordinates.x_axis[ax],
                     plot.data.ds.coordinates.y_axis[ax],
                 )
-                coord = (coord[xi], coord[yi])
+                ret_coord = (coord_copy[xi], coord_copy[yi])
 
             # if this is an off-axis project or slice (ie cutting plane)
             # we have to calculate where the data coords fall in the projected
@@ -95,20 +118,20 @@ class PlotCallback:
             elif ax == 4:
                 # transpose is just to get [[x1,x2,...],[y1,y2,...],[z1,z2,...]]
                 # in the same order as plot.data.center for array arithmetic
-                coord_vectors = coord.transpose() - plot.data.center
+                coord_vectors = coord_copy.transpose() - plot.data.center
                 x = np.dot(coord_vectors, plot.data.orienter.unit_vectors[1])
                 y = np.dot(coord_vectors, plot.data.orienter.unit_vectors[0])
                 # Transpose into image coords. Due to VR being not a
                 # right-handed coord system
-                coord = (y, x)
+                ret_coord = (y, x)
             else:
-                raise ValueError("Object being plot must have a `data.axis` defined")
+                raise ValueError("Object being plotted must have a `data.axis` defined")
 
         # if the position is already two-coords, it is expected to be
         # in the proper projected orientation
         else:
             raise ValueError("'data' coordinates must be 3 dimensions")
-        return coord
+        return ret_coord
 
     def _convert_to_plot(self, plot, coord, offset=True):
         """
@@ -304,10 +327,15 @@ class VelocityCallback(PlotCallback):
     _supported_geometries = ("cartesian", "spectral_cube", "polar", "cylindrical")
 
     def __init__(
-        self, factor=16, scale=None, scale_units=None, normalize=False, plot_args=None
+        self,
+        factor: Union[Tuple[int, int], int] = 16,
+        scale=None,
+        scale_units=None,
+        normalize=False,
+        plot_args=None,
     ):
         PlotCallback.__init__(self)
-        self.factor = factor
+        self.factor = _validate_factor_tuple(factor)
         self.scale = scale
         self.scale_units = scale_units
         self.normalize = normalize
@@ -394,10 +422,15 @@ class MagFieldCallback(PlotCallback):
     _supported_geometries = ("cartesian", "spectral_cube", "polar", "cylindrical")
 
     def __init__(
-        self, factor=16, scale=None, scale_units=None, normalize=False, plot_args=None
+        self,
+        factor: Union[Tuple[int, int], int] = 16,
+        scale=None,
+        scale_units=None,
+        normalize=False,
+        plot_args=None,
     ):
         PlotCallback.__init__(self)
-        self.factor = factor
+        self.factor = _validate_factor_tuple(factor)
         self.scale = scale
         self.scale_units = scale_units
         self.normalize = normalize
@@ -474,7 +507,7 @@ class QuiverCallback(PlotCallback):
         self,
         field_x,
         field_y,
-        factor=16,
+        factor: Union[Tuple[int, int], int] = 16,
         scale=None,
         scale_units=None,
         normalize=False,
@@ -487,7 +520,7 @@ class QuiverCallback(PlotCallback):
         self.field_y = field_y
         self.bv_x = bv_x
         self.bv_y = bv_y
-        self.factor = factor
+        self.factor = _validate_factor_tuple(factor)
         self.scale = scale
         self.scale_units = scale_units
         self.normalize = normalize
@@ -526,8 +559,8 @@ class QuiverCallback(PlotCallback):
 
         # We are feeding this size into the pixelizer, where it will properly
         # set it in reverse order
-        nx = plot.image._A.shape[1] // self.factor
-        ny = plot.image._A.shape[0] // self.factor
+        nx = plot.image._A.shape[1] // self.factor[0]
+        ny = plot.image._A.shape[0] // self.factor[1]
         pixX = plot.data.ds.coordinates.pixelize(
             plot.data.axis,
             plot.data,
@@ -551,7 +584,7 @@ class QuiverCallback(PlotCallback):
             np.linspace(yy0, yy1, ny, endpoint=True),
         )
         if self.normalize:
-            nn = np.sqrt(pixX ** 2 + pixY ** 2)
+            nn = np.sqrt(pixX**2 + pixY**2)
             pixX /= nn
             pixY /= nn
         plot._axes.quiver(
@@ -584,7 +617,7 @@ class ContourCallback(PlotCallback):
         self,
         field,
         ncont=5,
-        factor=4,
+        factor: Union[Tuple[int, int], int] = 4,
         clim=None,
         plot_args=None,
         label=False,
@@ -598,7 +631,7 @@ class ContourCallback(PlotCallback):
         def_text_args = {"colors": "w"}
         self.ncont = ncont
         self.field = field
-        self.factor = factor
+        self.factor = _validate_factor_tuple(factor)
         self.clim = clim
         self.take_log = take_log
         if plot_args is None:
@@ -636,8 +669,8 @@ class ContourCallback(PlotCallback):
 
         # We want xi, yi in plot coordinates
         xi, yi = np.mgrid[
-            xx0 : xx1 : numPoints_x / (self.factor * 1j),
-            yy0 : yy1 : numPoints_y / (self.factor * 1j),
+            xx0 : xx1 : numPoints_x / (self.factor[0] * 1j),
+            yy0 : yy1 : numPoints_y / (self.factor[1] * 1j),
         ]
         data = self.data_source or plot.data
 
@@ -681,7 +714,7 @@ class ContourCallback(PlotCallback):
             triangulation = Triangulation(x, y)
             zi = LinearTriInterpolator(triangulation, z)(xi, yi)
         elif plot._type_name == "OffAxisProjection":
-            zi = plot.frb[self.field][:: self.factor, :: self.factor].transpose()
+            zi = plot.frb[self.field][:: self.factor[0], :: self.factor[1]].transpose()
 
         if self.take_log is None:
             field = data._determine_fields([self.field])[0]
@@ -904,18 +937,18 @@ class StreamlineCallback(PlotCallback):
         self,
         field_x,
         field_y,
-        factor=16,
+        factor: Union[Tuple[int, int], int] = 16,
         density=1,
         field_color=None,
         display_threshold=None,
         plot_args=None,
     ):
         PlotCallback.__init__(self)
-        def_plot_args = {}
+        def_plot_args: Optional[Dict[str, Any]] = {}
         self.field_x = field_x
         self.field_y = field_y
         self.field_color = field_color
-        self.factor = factor
+        self.factor = _validate_factor_tuple(factor)
         self.dens = density
         self.display_threshold = display_threshold
         if plot_args is None:
@@ -928,8 +961,8 @@ class StreamlineCallback(PlotCallback):
 
         # We are feeding this size into the pixelizer, where it will properly
         # set it in reverse order
-        nx = plot.image._A.shape[1] // self.factor
-        ny = plot.image._A.shape[0] // self.factor
+        nx = plot.image._A.shape[1] // self.factor[0]
+        ny = plot.image._A.shape[0] // self.factor[1]
         pixX = plot.data.ds.coordinates.pixelize(
             plot.data.axis, plot.data, self.field_x, bounds, (nx, ny)
         )
@@ -1039,7 +1072,12 @@ class LinePlotCallback(PlotCallback):
     """
 
     _type_name = "line"
-    _supported_geometries = ("cartesian", "spectral_cube", "polar", "cylindrical")
+    _supported_geometries: Tuple[str, ...] = (
+        "cartesian",
+        "spectral_cube",
+        "polar",
+        "cylindrical",
+    )
 
     def __init__(self, p1, p2, data_coords=False, coord_system="data", plot_args=None):
         PlotCallback.__init__(self)
@@ -1121,7 +1159,7 @@ class CuttingQuiverCallback(PlotCallback):
         PlotCallback.__init__(self)
         self.field_x = field_x
         self.field_y = field_y
-        self.factor = factor
+        self.factor = _validate_factor_tuple(factor)
         self.scale = scale
         self.scale_units = scale_units
         self.normalize = normalize
@@ -1132,8 +1170,8 @@ class CuttingQuiverCallback(PlotCallback):
     def __call__(self, plot):
         x0, x1, y0, y1 = self._physical_bounds(plot)
         xx0, xx1, yy0, yy1 = self._plot_bounds(plot)
-        nx = plot.image._A.shape[1] // self.factor
-        ny = plot.image._A.shape[0] // self.factor
+        nx = plot.image._A.shape[1] // self.factor[0]
+        ny = plot.image._A.shape[0] // self.factor[1]
         indices = np.argsort(plot.data["index", "dx"])[::-1].astype(np.int_)
 
         pixX = np.zeros((ny, nx), dtype="f8")
@@ -1176,7 +1214,7 @@ class CuttingQuiverCallback(PlotCallback):
         )
 
         if self.normalize:
-            nn = np.sqrt(pixX ** 2 + pixY ** 2)
+            nn = np.sqrt(pixX**2 + pixY**2)
             pixX /= nn
             pixY /= nn
 
@@ -1704,7 +1742,12 @@ class TextLabelCallback(PlotCallback):
     """
 
     _type_name = "text"
-    _supported_geometries = ("cartesian", "spectral_cube", "polar", "cylindrical")
+    _supported_geometries: Tuple[str, ...] = (
+        "cartesian",
+        "spectral_cube",
+        "polar",
+        "cylindrical",
+    )
 
     def __init__(
         self,
@@ -1898,6 +1941,14 @@ class HaloCatalogCallback(PlotCallback):
         font_kwargs=None,
         factor=1.0,
     ):
+        issue_deprecation_warning(
+            "The annotate_halos method has been fully migrated to the "
+            "yt_astro_analysis extension. "
+            "Please update the extension to version 1.1 or newer. "
+            "This duplicated functionality will be removed from the main yt package.",
+            since="4.1",
+            removal="4.2",
+        )
 
         try:
             from yt_astro_analysis.halo_analysis.api import HaloCatalog
@@ -2502,7 +2553,7 @@ class TimestampCallback(PlotCallback):
         if self.time:
             # If no time_units are set, then identify a best fit time unit
             if self.time_unit is None:
-                if plot.ds.unit_system._code_flag:
+                if plot.ds._uses_code_time_unit:
                     # if the unit system is in code units
                     # we should not convert to seconds for the plot.
                     self.time_unit = plot.ds.unit_system.base_units[dimensions.time]
@@ -2527,7 +2578,7 @@ class TimestampCallback(PlotCallback):
                 un = self.time_unit.latex_representation()
                 time_unit = r"$\ \ (" + un + r")$"
             except AttributeError as err:
-                if plot.ds.unit_system._code_flag == "code":
+                if plot.ds._uses_code_time_unit:
                     raise RuntimeError(
                         "The time unit str repr didn't match expectations, something is wrong."
                     ) from err
@@ -3048,7 +3099,8 @@ class LineIntegralConvolutionCallback(PlotCallback):
         vectors = np.concatenate((pixX[..., np.newaxis], pixY[..., np.newaxis]), axis=2)
 
         if self.texture is None:
-            self.texture = np.random.rand(nx, ny).astype(np.double)
+            prng = np.random.RandomState(0x4D3D3D3)
+            self.texture = prng.random_sample((nx, ny))
         elif self.texture.shape != (nx, ny):
             raise ValueError(
                 "'texture' must have the same shape "
@@ -3061,6 +3113,10 @@ class LineIntegralConvolutionCallback(PlotCallback):
         lic_data = line_integral_convolution_2d(vectors, self.texture, kernel)
         lic_data = lic_data / lic_data.max()
         lic_data_clip = np.clip(lic_data, self.lim[0], self.lim[1])
+
+        mask = ~(np.isfinite(pixX) & np.isfinite(pixY))
+        lic_data[mask] = np.nan
+        lic_data_clip[mask] = np.nan
 
         if self.const_alpha:
             plot._axes.imshow(

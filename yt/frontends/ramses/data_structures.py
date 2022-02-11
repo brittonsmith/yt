@@ -357,7 +357,7 @@ class RAMSESDomainSubset(OctreeSubset):
         tr = {}
 
         cell_count = (
-            selector.count_octs(self.oct_handler, self.domain_id) * self.nz ** ndim
+            selector.count_octs(self.oct_handler, self.domain_id) * self.nz**ndim
         )
 
         gz_cache = getattr(self, "_ghost_zone_cache", None)
@@ -404,7 +404,7 @@ class RAMSESDomainSubset(OctreeSubset):
             # new_fwidth contains the fwidth of the oct+ghost zones
             # this is a constant array in each oct, so we simply copy
             # the oct value using numpy fancy-indexing
-            new_fwidth = np.zeros((n_oct, self.nz ** 3, 3), dtype=fwidth.dtype)
+            new_fwidth = np.zeros((n_oct, self.nz**3, 3), dtype=fwidth.dtype)
             new_fwidth[:, :, :] = fwidth[:, 0:1, :]
             fwidth = new_fwidth.reshape(-1, 3)
         return fwidth
@@ -422,7 +422,7 @@ class RAMSESDomainSubset(OctreeSubset):
             self.selector, self._num_ghost_zones
         )
 
-        N_per_oct = self.nz ** 3
+        N_per_oct = self.nz**3
         oct_inds = oct_inds.reshape(-1, N_per_oct)
         cell_inds = cell_inds.reshape(-1, N_per_oct)
 
@@ -738,7 +738,7 @@ class RAMSESDataset(Dataset):
         #       to be set, so we cannot convert from to yt/ramses
         #       conventions
         if max_level is None and max_level_convention is None:
-            return (2 ** 999, "yt")
+            return (2**999, "yt")
 
         # Check max_level is a valid, positive integer
         if not isinstance(max_level, (int, np.integer)):
@@ -801,14 +801,14 @@ class RAMSESDataset(Dataset):
         time_unit = self.parameters["unit_t"]
 
         # calculating derived units (except velocity and temperature, done below)
-        mass_unit = density_unit * length_unit ** 3
-        magnetic_unit = np.sqrt(4 * np.pi * mass_unit / (time_unit ** 2 * length_unit))
+        mass_unit = density_unit * length_unit**3
+        magnetic_unit = np.sqrt(4 * np.pi * mass_unit / (time_unit**2 * length_unit))
         pressure_unit = density_unit * (length_unit / time_unit) ** 2
 
         # TODO:
         # Generalize the temperature field to account for ionization
         # For now assume an atomic ideal gas with cosmic abundances (x_H = 0.76)
-        mean_molecular_weight_factor = _X ** -1
+        mean_molecular_weight_factor = _X**-1
 
         setdefaultattr(self, "density_unit", self.quan(density_unit, "g/cm**3"))
         setdefaultattr(self, "magnetic_unit", self.quan(magnetic_unit, "gauss"))
@@ -819,7 +819,7 @@ class RAMSESDataset(Dataset):
             self, "velocity_unit", self.quan(length_unit, "cm") / self.time_unit
         )
         temperature_unit = (
-            self.velocity_unit ** 2 * mp * mean_molecular_weight_factor / kb
+            self.velocity_unit**2 * mp * mean_molecular_weight_factor / kb
         )
         setdefaultattr(self, "temperature_unit", temperature_unit.in_units("K"))
 
@@ -840,18 +840,37 @@ class RAMSESDataset(Dataset):
         rheader = {}
 
         def read_rhs(f, cast):
-            line = f.readline().replace("\n", "")
-            p, v = line.split("=")
-            rheader[p.strip()] = cast(v.strip())
+            line = f.readline().strip()
+
+            if line and "=" in line:
+                key, val = (_.strip() for _ in line.split("="))
+                rheader[key] = cast(val)
+                return key
+            else:
+                return None
+
+        def cast_a_else_b(cast_a, cast_b):
+            def caster(val):
+                try:
+                    return cast_a(val)
+                except ValueError:
+                    return cast_b(val)
+
+            return caster
 
         with open(self.parameter_filename) as f:
+            # Standard: first six are ncpu, ndim, levelmin, levelmax, ngridmax, nstep_coarse
             for _ in range(6):
                 read_rhs(f, int)
             f.readline()
+            # Standard: next 11 are boxlen, time, aexp, h0, omega_m, omega_l, omega_k, omega_b, unit_l, unit_d, unit_t
             for _ in range(11):
-                read_rhs(f, float)
-            f.readline()
-            read_rhs(f, str)
+                key = read_rhs(f, float)
+
+            # Read non standard extra fields until hitting the ordering type
+            while key != "ordering type":
+                key = read_rhs(f, cast_a_else_b(float, str))
+
             # This next line deserves some comment.  We specify a min_level that
             # corresponds to the minimum level in the RAMSES simulation.  RAMSES is
             # one-indexed, but it also does refer to the *oct* dimensions -- so
