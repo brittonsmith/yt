@@ -273,20 +273,23 @@ Overplot Quivers
 Axis-Aligned Data Sources
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-.. function:: annotate_quiver(self, field_x, field_y, factor=16, scale=None, \
+.. function:: annotate_quiver(self, field_x, field_y, field_c=None, factor=16, scale=None, \
                               scale_units=None, normalize=False, plot_args=None)
 
    (This is a proxy for
    :class:`~yt.visualization.plot_modifications.QuiverCallback`.)
 
    Adds a 'quiver' plot to any plot, using the ``field_x`` and ``field_y`` from
-   the associated data, skipping every ``factor`` datapoints in the
-   discretization. ``scale`` is the data units per arrow length unit using
+   the associated data, skipping every ``factor`` pixels in the
+   discretization. A third field, ``field_c``, can be used as color; which is the
+   counterpart of ``matplotlib.axes.Axes.quiver``'s final positional argument ``C``.
+   ``scale`` is the data units per arrow length unit using
    ``scale_units``. If ``normalize`` is ``True``, the fields will be scaled by
    their local (in-plane) length, allowing morphological features to be more
    clearly seen for fields with substantial variation in field strength.
-   Additional arguments can be passed to the ``plot_args`` dictionary, see
-   matplotlib.axes.Axes.quiver for more info.
+   All additional keyword arguments are passed down to ``matplotlib.Axes.axes.quiver``.
+
+   Example using a constant color
 
 .. python-script::
 
@@ -301,9 +304,39 @@ Axis-Aligned Data Sources
        weight_field="density",
        width=(20, "kpc"),
    )
-   p.annotate_quiver(("gas", "velocity_x"), ("gas", "velocity_y"), factor=16,
-                     plot_args={"color": "purple"})
+   p.annotate_quiver(
+      ("gas", "velocity_x"),
+      ("gas", "velocity_y"),
+      factor=16,
+      color="purple",
+   )
    p.save()
+
+
+   And now using a continuous colormap
+
+.. python-script::
+
+   import yt
+
+   ds = yt.load("IsolatedGalaxy/galaxy0030/galaxy0030")
+   p = yt.ProjectionPlot(
+       ds,
+       "z",
+       ("gas", "density"),
+       center=[0.5, 0.5, 0.5],
+       weight_field="density",
+       width=(20, "kpc"),
+   )
+   p.annotate_quiver(
+      ("gas", "velocity_x"),
+      ("gas", "velocity_y"),
+      ("gas", "vorticity_z"),
+      factor=16,
+      cmap="inferno_r",
+   )
+   p.save()
+
 
 Off-Axis Data Sources
 ^^^^^^^^^^^^^^^^^^^^^
@@ -834,4 +867,24 @@ Overplot the Path of a Ray
    p = yt.ProjectionPlot(ds, "z", ("gas", "density"))
    p.annotate_ray(oray)
    p.annotate_ray(ray)
+   p.save()
+
+
+Applying filters on the final image
+-----------------------------------
+
+It is also possible to operate on the plotted image directly by using
+one of the fixed resolution buffer filter as described in
+:ref:`frb-filters`.
+Note that it is necessary to call the plot object's ``refresh`` method
+to apply filters.
+
+.. python-script::
+
+   import yt
+
+   ds = yt.load('IsolatedGalaxy/galaxy0030/galaxy0030')
+   p = yt.SlicePlot(ds, 'z', 'density')
+   p.frb.apply_gauss_beam(sigma=30)
+   p.refresh()
    p.save()
