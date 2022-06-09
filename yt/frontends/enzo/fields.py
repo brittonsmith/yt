@@ -213,6 +213,8 @@ class EnzoFieldInfo(FieldInfoContainer):
             te_name = "Total_Energy"
         elif ("enzo", "TotalEnergy") in self.field_list:
             te_name = "TotalEnergy"
+        else:
+            return
 
         if hydro_method == 2:
             self.add_output_field(
