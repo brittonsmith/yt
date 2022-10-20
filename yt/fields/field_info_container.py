@@ -359,9 +359,7 @@ class FieldInfoContainer(dict):
             self[name] = DerivedField(name, sampling_type, function, **kwargs)
             return
 
-        sampling_type = self._sanitize_sampling_type(
-            sampling_type, particle_type=kwargs.get("particle_type")
-        )
+        sampling_type = self._sanitize_sampling_type(sampling_type)
 
         if sampling_type == "particle":
             ftype = "all"
