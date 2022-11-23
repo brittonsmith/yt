@@ -346,11 +346,11 @@ class RAMSESDomainSubset(OctreeSubset):
         base_region,
         domain,
         ds,
-        over_refine_factor=1,
+        num_zones=2,
         num_ghost_zones=0,
         base_grid=None,
     ):
-        super().__init__(base_region, domain, ds, over_refine_factor, num_ghost_zones)
+        super().__init__(base_region, domain, ds, num_zones, num_ghost_zones)
 
         self._base_grid = base_grid
 
@@ -360,9 +360,7 @@ class RAMSESDomainSubset(OctreeSubset):
                     "Ghost zones will wrongly assume the domain to be periodic."
                 )
             # Create a base domain *with no self._base_domain.fwidth
-            base_domain = RAMSESDomainSubset(
-                ds.all_data(), domain, ds, over_refine_factor
-            )
+            base_domain = RAMSESDomainSubset(ds.all_data(), domain, ds, num_zones)
             self._base_domain = base_domain
         elif num_ghost_zones < 0:
             raise RuntimeError(
@@ -1030,7 +1028,9 @@ class RAMSESDataset(Dataset):
                     nml = f90nml.read(f)
             except ImportError as e:
                 nml = f"An error occurred when reading the namelist: {str(e)}"
-            except (ValueError, StopIteration) as err:
+            except (ValueError, StopIteration, AssertionError) as err:
+                # Note: f90nml may raise a StopIteration, a ValueError or an AssertionError if
+                # the namelist is not valid.
                 mylog.warning(
                     "Could not parse `namelist.txt` file as it was malformed:",
                     exc_info=err,

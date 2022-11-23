@@ -1,9 +1,10 @@
 import weakref
-from functools import wraps
-from typing import Dict, List, Optional
+from functools import partial
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from yt._maintenance.deprecation import issue_deprecation_warning
 from yt.data_objects.image_array import ImageArray
 from yt.frontends.ytdata.utilities import save_as_dataset
 from yt.funcs import get_output_filename, iter_fields, mylog
@@ -13,14 +14,13 @@ from yt.utilities.lib.api import (  # type: ignore
     add_points_to_greyscale_image,
 )
 from yt.utilities.lib.pixelization_routines import pixelize_cylinder
+from yt.utilities.math_utils import compute_stddev_image
 from yt.utilities.on_demand_imports import _h5py as h5py
 
-from .fixed_resolution_filters import (
-    FixedResolutionBufferFilter,
-    apply_filter,
-    filter_registry,
-)
 from .volume_rendering.api import off_axis_projection
+
+if TYPE_CHECKING:
+    from yt.visualization.fixed_resolution_filters import FixedResolutionBufferFilter
 
 
 class FixedResolutionBuffer:
@@ -105,7 +105,7 @@ class FixedResolutionBuffer:
         antialias=True,
         periodic=False,
         *,
-        filters: Optional[List[FixedResolutionBufferFilter]] = None,
+        filters: Optional[List["FixedResolutionBufferFilter"]] = None,
     ):
         self.data_source = data_source
         self.ds = data_source.ds
@@ -113,11 +113,22 @@ class FixedResolutionBuffer:
         self.buff_size = (int(buff_size[0]), int(buff_size[1]))
         self.antialias = antialias
         self.data: Dict[str, np.ndarray] = {}
-        self._filters = []
         self.axis = data_source.axis
         self.periodic = periodic
         self._data_valid = False
-        self._filters = filters if filters is not None else []
+
+        # import type here to avoid import cycles
+        # note that this import statement is actually crucial at runtime:
+        # the filter methods for the present class are defined only when
+        # fixed_resolution_filters is imported, so we need to guarantee
+        # that it happens no later than instanciation
+        from yt.visualization.fixed_resolution_filters import (
+            FixedResolutionBufferFilter,
+        )
+
+        self._filters: List[FixedResolutionBufferFilter] = (
+            filters if filters is not None else []
+        )
 
         ds = getattr(data_source, "ds", None)
         if ds is not None:
@@ -133,8 +144,6 @@ class FixedResolutionBuffer:
             yax = self.ds.coordinates.y_axis[axis]
             self._period = (DD[xax], DD[yax])
             self._edges = ((DLE[xax], DRE[xax]), (DLE[yax], DRE[yax]))
-
-        self.setup_filters()
 
     def keys(self):
         return self.data.keys()
@@ -166,8 +175,7 @@ class FixedResolutionBuffer:
             int(self.antialias),
         )
 
-        for name, (args, kwargs) in self._filters:
-            buff = filter_registry[name](*args, **kwargs).apply(buff)
+        buff = self._apply_filters(buff)
 
         # FIXME FIXME FIXME we shouldn't need to do this for projections
         # but that will require fixing data object access for particle
@@ -186,6 +194,16 @@ class FixedResolutionBuffer:
         self._data_valid = True
         return self.data[item]
 
+    def render(self, item):
+        # deleguate to __getitem__ for historical reasons
+        # this method exists for clarity of intention
+        return self[item]
+
+    def _apply_filters(self, buffer: np.ndarray) -> np.ndarray:
+        for f in self._filters:
+            buffer = f(buffer)
+        return buffer
+
     def __setitem__(self, item, val):
         self.data[item] = val
 
@@ -195,7 +213,7 @@ class FixedResolutionBuffer:
         fields += getattr(self.data_source, "field_data", {}).keys()
         for f in fields:
             if f not in exclude and f[0] not in self.data_source.ds.particle_types:
-                self[f]
+                self.render(f)
 
     def _get_info(self, item):
         info = {}
@@ -380,7 +398,7 @@ class FixedResolutionBuffer:
         fid = FITSImageData(self, fields=fields, length_unit=length_unit)
         if other_keys is not None:
             for k, v in other_keys.items():
-                fid.update_all_headers(k, v)
+                fid.update_header("all", k, v)
         return fid
 
     def export_dataset(self, fields=None, nprocs=1):
@@ -522,33 +540,10 @@ class FixedResolutionBuffer:
         return rv
 
     def setup_filters(self):
-        for key in filter_registry:
-            filtername = filter_registry[key]._filter_name
-
-            # We need to wrap to create a closure so that
-            # FilterMaker is bound to the wrapped method.
-            def closure():
-                FilterMaker = filter_registry[key]
-
-                @wraps(FilterMaker)
-                def method(*args, **kwargs):
-                    # We need to also do it here as "invalidate_plot"
-                    # and "apply_callback" require the functions'
-                    # __name__ in order to work properly
-                    @wraps(FilterMaker)
-                    def cb(self, *a, **kwa):
-                        # We construct the callback method
-                        # skipping self
-                        return FilterMaker(*a, **kwa)
-
-                    # Create callback
-                    cb = apply_filter(cb)
-
-                    return cb(self, *args, **kwargs)
-
-                return method
-
-            self.__dict__["apply_" + filtername] = closure()
+        issue_deprecation_warning(
+            "The FixedResolutionBuffer.setup_filters method is now a no-op. ",
+            since="4.1.0",
+        )
 
 
 class CylindricalFixedResolutionBuffer(FixedResolutionBuffer):
@@ -626,6 +621,39 @@ class OffAxisProjectionFixedResolutionBuffer(FixedResolutionBuffer):
             north_vector=dd.north_vector,
             method=dd.method,
         )
+        if self.data_source.moment == 2:
+
+            def _sq_field(field, data, item: Tuple[str, str]):
+                return data[item] ** 2
+
+            fd = self.ds._get_field_info(*item)
+
+            item_sq = (item[0], f"tmp_{item[1]}_squared")
+            self.ds.add_field(
+                item_sq,
+                partial(_sq_field, item=item),
+                sampling_type=fd.sampling_type,
+                units=f"({fd.units})*({fd.units})",
+            )
+
+            buff2 = off_axis_projection(
+                dd.dd,
+                dd.center,
+                dd.normal_vector,
+                width,
+                self.buff_size,
+                item_sq,
+                weight=dd.weight_field,
+                volume=dd.volume,
+                no_ghost=dd.no_ghost,
+                interpolated=dd.interpolated,
+                north_vector=dd.north_vector,
+                method=dd.method,
+            )
+            buff = compute_stddev_image(buff2, buff)
+
+            self.ds.field_info.pop(item_sq)
+
         ia = ImageArray(buff.swapaxes(0, 1), info=self._get_info(item))
         self[item] = ia
         return ia
@@ -792,4 +820,4 @@ class ParticleImageBuffer(FixedResolutionBuffer):
         fields += getattr(self.data_source, "field_data", {}).keys()
         for f in fields:
             if f not in exclude:
-                self[f]
+                self.render(f)

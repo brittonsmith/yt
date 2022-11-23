@@ -2,6 +2,8 @@ from yt.fields.field_info_container import FieldInfoContainer
 from yt.fields.magnetic_field import setup_magnetic_field_aliases
 from yt.fields.species_fields import add_species_field_by_fraction, setup_species_fields
 from yt.frontends.gadget.api import GadgetFieldInfo
+from yt.utilities.chemical_formulas import ChemicalFormula
+from yt.utilities.physical_ratios import _primordial_mass_fraction
 
 metal_elements = ["He", "C", "N", "O", "Ne", "Mg", "Si", "Fe"]
 
@@ -29,6 +31,14 @@ class ArepoFieldInfo(GadgetFieldInfo):
             ("GFM_Metals_06", ("", ["Mg_fraction"], None)),
             ("GFM_Metals_07", ("", ["Si_fraction"], None)),
             ("GFM_Metals_08", ("", ["Fe_fraction"], None)),
+            ("GFM_StellarPhotometrics_00", ("", ["U_magnitude"], None)),
+            ("GFM_StellarPhotometrics_01", ("", ["B_magnitude"], None)),
+            ("GFM_StellarPhotometrics_02", ("", ["V_magnitude"], None)),
+            ("GFM_StellarPhotometrics_03", ("", ["K_magnitude"], None)),
+            ("GFM_StellarPhotometrics_04", ("", ["g_magnitude"], None)),
+            ("GFM_StellarPhotometrics_05", ("", ["r_magnitude"], None)),
+            ("GFM_StellarPhotometrics_06", ("", ["i_magnitude"], None)),
+            ("GFM_StellarPhotometrics_07", ("", ["z_magnitude"], None)),
             (
                 "CosmicRaySpecificEnergy",
                 ("code_specific_energy", ["specific_cosmic_ray_energy"], None),
@@ -77,10 +87,7 @@ class ArepoFieldInfo(GadgetFieldInfo):
 
         if (ptype, "GFM_Metals_00") in self.field_list:
             self.nuclei_names = metal_elements
-            self.species_names = ["H"]
-            if (ptype, "NeutralHydrogenAbundance") in self.field_list:
-                self.species_names += ["H_p0", "H_p1"]
-            self.species_names += metal_elements
+            self.species_names = ["H"] + metal_elements
 
         if (ptype, "MagneticField") in self.field_list:
             setup_magnetic_field_aliases(self, ptype, "MagneticField")
@@ -120,9 +127,25 @@ class ArepoFieldInfo(GadgetFieldInfo):
                     field = f"{species}{suf}"
                     self.alias(("gas", field), (ptype, field))
 
-            self.alias(("gas", "H_nuclei_density"), ("gas", "H_number_density"))
-
         if (ptype, "ElectronAbundance") in self.field_list:
+
+            # If we have ElectronAbundance but not NeutralHydrogenAbundance, assume the
+            # cosmic value for hydrogen to generate the H_number_density
+            if (ptype, "NeutralHydrogenAbundance") not in self.field_list:
+                amu_cgs = self.ds.units.physical_constants.amu_cgs
+                muinv = _primordial_mass_fraction["H"] / ChemicalFormula("H").weight
+
+                def _h_number_density(field, data):
+                    return data["gas", "density"] * muinv / amu_cgs
+
+                self.add_field(
+                    (ptype, "H_number_density"),
+                    sampling_type="particle",
+                    function=_h_number_density,
+                    units=self.ds.unit_system["number_density"],
+                )
+                self.alias(("gas", "H_number_density"), (ptype, "H_number_density"))
+                self.alias(("gas", "H_nuclei_density"), ("gas", "H_number_density"))
 
             def _el_number_density(field, data):
                 return (
@@ -157,20 +180,10 @@ class ArepoFieldInfo(GadgetFieldInfo):
                 units=self.ds.unit_system["pressure"],
             )
 
-            self.alias(
-                ("PartType0", "specific_cr_energy"),
-                ("PartType0", "specific_cosmic_ray_energy"),
-                deprecate=("4.1.0", "4.2.0"),
-            )
-
-            self.alias(
-                ("gas", "cr_energy_density"),
-                ("gas", "cosmic_ray_energy_density"),
-                deprecate=("4.1.0", "4.2.0"),
-            )
-
             def _cr_pressure(field, data):
-                return (data.ds.gamma_cr - 1.0) * data["gas", "cr_energy_density"]
+                return (data.ds.gamma_cr - 1.0) * data[
+                    "gas", "cosmic_ray_energy_density"
+                ]
 
             self.add_field(
                 ("gas", "cosmic_ray_pressure"),

@@ -299,6 +299,7 @@ _geom_transforms = {
     "polar": ((0.0, 0.0, 0.0), (1.0, 2.0 * np.pi, 1.0)),  # rtz
     "geographic": ((-90.0, -180.0, 0.0), (90.0, 180.0, 1000.0)),  # latlonalt
     "internal_geographic": ((-90.0, -180.0, 0.0), (90.0, 180.0, 1000.0)),  # latlondep
+    "spectral_cube": ((0.0, 0.0, 0.0), (1.0, 1.0, 1.0)),
 }
 
 
@@ -487,6 +488,25 @@ def small_fake_hexahedral_ds():
 
     ds = load_unstructured_mesh(_connectivity - 1, _coordinates, node_data=node_data)
     return ds
+
+
+def fake_stretched_ds(N=16):
+    from yt.loaders import load_uniform_grid
+
+    np.random.seed(0x4D3D3D3)
+    data = {"density": np.random.random((N, N, N))}
+
+    cell_widths = []
+    for _ in range(3):
+        cw = np.random.random(N)
+        cw /= cw.sum()
+        cell_widths.append(cw)
+    return load_uniform_grid(
+        data,
+        [N, N, N],
+        bbox=np.array([[0.0, 1.0], [0.0, 1.0], [0.0, 1.0]]),
+        cell_widths=cell_widths,
+    )
 
 
 def fake_vr_orientation_test_ds(N=96, scale=1):
@@ -690,7 +710,7 @@ def fake_octree_ds(
     velocity_unit=None,
     magnetic_unit=None,
     periodicity=(True, True, True),
-    over_refine_factor=1,
+    num_zones=2,
     partial_coverage=1,
     unit_system="cgs",
 ):
@@ -720,7 +740,7 @@ def fake_octree_ds(
         magnetic_unit=magnetic_unit,
         periodicity=periodicity,
         partial_coverage=partial_coverage,
-        over_refine_factor=over_refine_factor,
+        num_zones=num_zones,
         unit_system=unit_system,
     )
     return ds
@@ -906,15 +926,9 @@ def requires_module_pytest(*module_names):
 
     So that it can be later renamed to `requires_module`.
     """
-    from yt.utilities import on_demand_imports as odi
 
     def deco(func):
-        missing = [
-            name
-            for name in module_names
-            if not getattr(odi, f"_{name}").__is_available__
-            for name in module_names
-        ]
+        missing = [name for name in module_names if find_spec(name) is None]
 
         # note that order between these two decorators matters
         @pytest.mark.skipif(
@@ -1097,7 +1111,9 @@ def check_results(func):
 
         return _func
 
-    from yt.mods import unparsed_args
+    import yt.startup_tasks as _startup_tasks
+
+    unparsed_args = _startup_tasks.unparsed_args
 
     if "--answer-reference" in unparsed_args:
         return compute_results(func)

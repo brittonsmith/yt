@@ -2,9 +2,9 @@ import inspect
 import re
 import warnings
 from abc import ABC, abstractmethod
-from functools import wraps
-from numbers import Integral, Number
-from typing import Any, Dict, Optional, Tuple, Union
+from functools import update_wrapper
+from numbers import Integral, Number, Real
+from typing import Any, Dict, Optional, Tuple, Type, Union
 
 import matplotlib
 import numpy as np
@@ -13,14 +13,13 @@ from yt._maintenance.deprecation import issue_deprecation_warning
 from yt.data_objects.data_containers import YTDataContainer
 from yt.data_objects.level_sets.clump_handling import Clump
 from yt.data_objects.selection_objects.cut_region import YTCutRegion
-from yt.data_objects.static_output import Dataset
 from yt.frontends.ytdata.data_structures import YTClumpContainer
 from yt.funcs import is_sequence, mylog, validate_width_tuple
 from yt.geometry.geometry_handler import is_curvilinear
 from yt.geometry.unstructured_mesh_handler import UnstructuredIndex
 from yt.units import dimensions
 from yt.units.yt_array import YTArray, YTQuantity, uhstack  # type: ignore
-from yt.utilities.exceptions import YTDataTypeUnsupported
+from yt.utilities.exceptions import YTDataTypeUnsupported, YTUnsupportedPlotCallback
 from yt.utilities.lib.geometry_utils import triangle_plane_intersect
 from yt.utilities.lib.line_integral_convolution import line_integral_convolution_2d
 from yt.utilities.lib.mesh_triangulation import triangulate_indices
@@ -29,27 +28,16 @@ from yt.utilities.lib.pixelization_routines import (
     pixelize_off_axis_cartesian,
 )
 from yt.utilities.math_utils import periodic_ray
-from yt.utilities.on_demand_imports import NotAModule
-from yt.visualization._commons import _swap_arg_pair_order, _swap_axes_extents
+from yt.visualization._commons import (
+    _swap_arg_pair_order,
+    _swap_axes_extents,
+    invalidate_plot,
+)
 from yt.visualization.base_plot_types import CallbackWrapper
 from yt.visualization.image_writer import apply_colormap
+from yt.visualization.plot_window import PWViewerMPL
 
-callback_registry = {}
-
-
-def _verify_geometry(func):
-    @wraps(func)
-    def _check_geometry(self, plot):
-        geom = plot.data.ds.coordinates.name
-        supp = self._supported_geometries
-        cs = getattr(self, "coord_system", None)
-        if supp is None or geom in supp:
-            return func(self, plot)
-        if cs in ("axis", "figure") and "force" not in supp:
-            return func(self, plot)
-        raise YTDataTypeUnsupported(geom, supp)
-
-    return _check_geometry
+callback_registry: Dict[str, Type["PlotCallback"]] = {}
 
 
 def _validate_factor_tuple(factor) -> Tuple[int, int]:
@@ -79,12 +67,54 @@ class PlotCallback(ABC):
     # will *not* check whether or not the coord_system is in axis or figure,
     # and will only look at the geometries.
     _supported_geometries: Optional[Tuple[str, ...]] = None
+    _incompatible_plot_types: Tuple[str, ...] = tuple()
 
     def __init_subclass__(cls, *args, **kwargs):
         if inspect.isabstract(cls):
             return
+
+        # register class
         callback_registry[cls.__name__] = cls
-        cls.__call__ = _verify_geometry(cls.__call__)
+
+        # create a PWViewerMPL method by wrapping __init__
+        if cls.__init__.__doc__ is None:
+            # allow docstring definition at the class level instead of __init__
+            cls.__init__.__doc__ = cls.__doc__
+
+        supported_geometries = cls._supported_geometries
+        incompatible_plot_types = cls._incompatible_plot_types
+        type_name = cls._type_name
+
+        @invalidate_plot
+        def closure(self, *args, **kwargs):
+            nonlocal supported_geometries
+            nonlocal incompatible_plot_types
+            nonlocal type_name
+
+            geom = self.ds.geometry
+            if not (
+                supported_geometries is None
+                or geom in supported_geometries
+                or (
+                    kwargs.get("coord_system") in ("axis", "figure")
+                    and "force" not in supported_geometries
+                )
+            ):
+                raise YTDataTypeUnsupported(geom, supported_geometries)
+            if self._plot_type in incompatible_plot_types:
+                raise YTUnsupportedPlotCallback(type_name, self._plot_type)
+            self._callbacks.append(cls(*args, **kwargs))
+            return self
+
+        update_wrapper(
+            wrapper=closure,
+            wrapped=cls.__init__,
+            assigned=("__annotations__", "__doc__"),
+        )
+
+        method_name = "annotate_" + type_name
+        closure.__name__ = method_name
+        setattr(PWViewerMPL, method_name, closure)
 
     @abstractmethod
     def __init__(self, *args, **kwargs) -> None:
@@ -380,22 +410,39 @@ class VelocityCallback(PlotCallback):
     """
 
     _type_name = "velocity"
-    _supported_geometries = ("cartesian", "spectral_cube", "polar", "cylindrical")
+    _supported_geometries = (
+        "cartesian",
+        "spectral_cube",
+        "polar",
+        "cylindrical",
+        "spherical",
+    )
+    _incompatible_plot_types = ("OffAxisProjection", "Particle")
 
     def __init__(
         self,
         factor: Union[Tuple[int, int], int] = 16,
+        *,
         scale=None,
         scale_units=None,
         normalize=False,
         plot_args=None,
+        **kwargs,
     ):
         self.factor = _validate_factor_tuple(factor)
         self.scale = scale
         self.scale_units = scale_units
         self.normalize = normalize
-        if plot_args is None:
-            plot_args = {}
+        if plot_args is not None:
+            issue_deprecation_warning(
+                "`plot_args` is deprecated. "
+                "You can now pass arbitrary keyword arguments instead of a dictionary.",
+                since="4.1.0",
+            )
+            plot_args.update(kwargs)
+        else:
+            plot_args = kwargs
+
         self.plot_args = plot_args
 
     def __call__(self, plot):
@@ -416,7 +463,7 @@ class VelocityCallback(PlotCallback):
                 scale=self.scale,
                 normalize=self.normalize,
                 scale_units=self.scale_units,
-                plot_args=self.plot_args,
+                **self.plot_args,
             )
         else:
             xax = plot.data.ds.coordinates.x_axis[plot.data.axis]
@@ -438,6 +485,17 @@ class VelocityCallback(PlotCallback):
                 # should convert r-theta plane to x-y plane
                 xv = (ftype, "velocity_cartesian_x")
                 yv = (ftype, "velocity_cartesian_y")
+            elif plot.data.ds.geometry == "spherical":
+                if axis_names[plot.data.axis] == "phi":
+                    xv = (ftype, "velocity_cylindrical_radius")
+                    yv = (ftype, "velocity_cylindrical_z")
+                elif axis_names[plot.data.axis] == "theta":
+                    xv = (ftype, "velocity_conic_x")
+                    yv = (ftype, "velocity_conic_y")
+                else:
+                    raise NotImplementedError(
+                        f"annotate_velocity is missing support for normal={axis_names[plot.data.axis]!r}"
+                    )
             else:
                 # for other cases (even for cylindrical geometry),
                 # orthogonal planes are generically Cartesian
@@ -457,7 +515,7 @@ class VelocityCallback(PlotCallback):
                 normalize=self.normalize,
                 bv_x=bv_x,
                 bv_y=bv_y,
-                plot_args=self.plot_args,
+                **self.plot_args,
             )
         return qcb(plot)
 
@@ -474,22 +532,38 @@ class MagFieldCallback(PlotCallback):
     """
 
     _type_name = "magnetic_field"
-    _supported_geometries = ("cartesian", "spectral_cube", "polar", "cylindrical")
+    _supported_geometries = (
+        "cartesian",
+        "spectral_cube",
+        "polar",
+        "cylindrical",
+        "spherical",
+    )
+    _incompatible_plot_types = ("OffAxisProjection", "Particle")
 
     def __init__(
         self,
         factor: Union[Tuple[int, int], int] = 16,
+        *,
         scale=None,
         scale_units=None,
         normalize=False,
         plot_args=None,
+        **kwargs,
     ):
         self.factor = _validate_factor_tuple(factor)
         self.scale = scale
         self.scale_units = scale_units
         self.normalize = normalize
-        if plot_args is None:
-            plot_args = {}
+        if plot_args is not None:
+            issue_deprecation_warning(
+                "`plot_args` is deprecated. "
+                "You can now pass arbitrary keyword arguments instead of a dictionary.",
+                since="4.1.0",
+            )
+            plot_args.update(kwargs)
+        else:
+            plot_args = kwargs
         self.plot_args = plot_args
 
     def __call__(self, plot):
@@ -509,7 +583,7 @@ class MagFieldCallback(PlotCallback):
                 scale=self.scale,
                 scale_units=self.scale_units,
                 normalize=self.normalize,
-                plot_args=self.plot_args,
+                **self.plot_args,
             )
         else:
             xax = plot.data.ds.coordinates.x_axis[plot.data.axis]
@@ -524,6 +598,17 @@ class MagFieldCallback(PlotCallback):
                 # should convert r-theta plane to x-y plane
                 xv = (ftype, "magnetic_field_cartesian_x")
                 yv = (ftype, "magnetic_field_cartesian_y")
+            elif plot.data.ds.geometry == "spherical":
+                if axis_names[plot.data.axis] == "phi":
+                    xv = (ftype, "magnetic_field_cylindrical_radius")
+                    yv = (ftype, "magnetic_field_cylindrical_z")
+                elif axis_names[plot.data.axis] == "theta":
+                    xv = (ftype, "magnetic_field_conic_x")
+                    yv = (ftype, "magnetic_field_conic_y")
+                else:
+                    raise NotImplementedError(
+                        f"annotate_magnetic_field is missing support for normal={axis_names[plot.data.axis]!r}"
+                    )
             else:
                 # for other cases (even for cylindrical geometry),
                 # orthogonal planes are generically Cartesian
@@ -537,12 +622,14 @@ class MagFieldCallback(PlotCallback):
                 scale=self.scale,
                 scale_units=self.scale_units,
                 normalize=self.normalize,
-                plot_args=self.plot_args,
+                **self.plot_args,
             )
         return qcb(plot)
 
 
 class BaseQuiverCallback(PlotCallback, ABC):
+    _incompatible_plot_types = ("OffAxisProjection", "Particle")
+
     def __init__(
         self,
         field_x,
@@ -566,8 +653,11 @@ class BaseQuiverCallback(PlotCallback, ABC):
         if plot_args is None:
             plot_args = kwargs
         else:
-            # using plot_args should be deprecated at some point,
-            # but it needs to be done consistently for all callbacks
+            issue_deprecation_warning(
+                "`plot_args` is deprecated. "
+                "You can now pass arbitrary keyword arguments instead of a dictionary.",
+                since="4.1.0",
+            )
             plot_args.update(kwargs)
 
         self.plot_args = plot_args
@@ -642,6 +732,7 @@ class QuiverCallback(BaseQuiverCallback):
         "spectral_cube",
         "polar",
         "cylindrical",
+        "spherical",
     )
 
     def __init__(
@@ -737,7 +828,7 @@ class QuiverCallback(BaseQuiverCallback):
 
 class ContourCallback(PlotCallback):
     """
-    Add contours in *field* to the plot.  *ncont* governs the number of
+    Add contours in *field* to the plot. *levels* governs the number of
     contours generated, *factor* governs the number of points used in the
     interpolation, *take_log* governs how it is contoured and *clim* gives
     the (upper, lower) limits for contouring.  An alternate data source can be
@@ -747,23 +838,34 @@ class ContourCallback(PlotCallback):
 
     _type_name = "contour"
     _supported_geometries = ("cartesian", "spectral_cube", "cylindrical")
+    _incompatible_plot_types = ("Particle",)
 
     def __init__(
         self,
-        field,
-        ncont=5,
+        field: Union[Tuple[str, str], str],
+        levels: int = 5,
+        *,
         factor: Union[Tuple[int, int], int] = 4,
-        clim=None,
-        plot_args=None,
-        label=False,
-        take_log=None,
-        label_args=None,
-        text_args=None,
-        data_source=None,
-    ):
+        clim: Optional[Tuple[float, float]] = None,
+        label: bool = False,
+        take_log: Optional[bool] = None,
+        data_source: YTDataContainer = None,
+        plot_args: Optional[Dict[str, Any]] = None,
+        text_args: Optional[Dict[str, Any]] = None,
+        ncont: Optional[int] = None,  # deprecated
+    ) -> None:
         def_plot_args = {"colors": "k", "linestyles": "solid"}
         def_text_args = {"colors": "w"}
-        self.ncont = ncont
+        if ncont is not None:
+            issue_deprecation_warning(
+                "The `ncont` keyword argument is deprecated, use `levels` instead.",
+                since="4.1.0",
+            )
+            levels = ncont
+        if clim is not None and not isinstance(levels, (int, np.integer)):
+            raise TypeError(f"clim requires levels be an integer, received {levels}")
+
+        self.levels = levels
         self.field = field
         self.factor = _validate_factor_tuple(factor)
         self.clim = clim
@@ -772,14 +874,6 @@ class ContourCallback(PlotCallback):
             plot_args = def_plot_args
         self.plot_args = plot_args
         self.label = label
-        if label_args is not None:
-            text_args = label_args
-            issue_deprecation_warning(
-                "The label_args keyword is deprecated.  Please use "
-                "the text_args keyword instead.",
-                since="3.2",
-                removal="4.2",
-            )
         if text_args is None:
             text_args = def_text_args
         self.text_args = text_args
@@ -851,21 +945,30 @@ class ContourCallback(PlotCallback):
         elif plot._type_name == "OffAxisProjection":
             zi = plot.frb[self.field][:: self.factor[0], :: self.factor[1]].transpose()
 
-        if self.take_log is None:
+        take_log: bool
+        if self.take_log is not None:
+            take_log = self.take_log
+        else:
             field = data._determine_fields([self.field])[0]
-            self.take_log = plot.ds._get_field_info(*field).take_log
+            take_log = plot.ds._get_field_info(*field).take_log
 
-        if self.take_log:
+        if take_log:
             zi = np.log10(zi)
 
-        if self.take_log and self.clim is not None:
-            self.clim = (np.log10(self.clim[0]), np.log10(self.clim[1]))
+        clim: Union[Tuple[Real, Real], None]
+        if take_log and self.clim is not None:
+            clim = np.log10(self.clim[0]), np.log10(self.clim[1])
+        else:
+            clim = self.clim
 
-        if self.clim is not None:
-            self.ncont = np.linspace(self.clim[0], self.clim[1], self.ncont)
+        levels: Union[np.ndarray, int]
+        if clim is not None:
+            levels = np.linspace(clim[0], clim[1], self.levels)
+        else:
+            levels = self.levels
 
         xi, yi = self._sanitize_xy_order(plot, xi, yi)
-        cset = plot._axes.contour(xi, yi, zi, self.ncont, **self.plot_args)
+        cset = plot._axes.contour(xi, yi, zi, levels, **self.plot_args)
         self._set_plot_limits(plot, (xx0, xx1, yy0, yy1))
 
         if self.label:
@@ -892,6 +995,7 @@ class GridBoundaryCallback(PlotCallback):
 
     _type_name = "grids"
     _supported_geometries = ("cartesian", "spectral_cube", "cylindrical")
+    _incompatible_plot_types = ("OffAxisSlice", "OffAxisProjection", "Particle")
 
     def __init__(
         self,
@@ -1066,26 +1170,37 @@ class StreamlineCallback(PlotCallback):
 
     _type_name = "streamlines"
     _supported_geometries = ("cartesian", "spectral_cube", "polar", "cylindrical")
+    _incompatible_plot_types = ("OffAxisProjection", "Particle")
 
     def __init__(
         self,
         field_x,
         field_y,
+        *,
         factor: Union[Tuple[int, int], int] = 16,
         density=1,
         field_color=None,
         display_threshold=None,
         plot_args=None,
+        **kwargs,
     ):
-        def_plot_args: Optional[Dict[str, Any]] = {}
         self.field_x = field_x
         self.field_y = field_y
         self.field_color = field_color
         self.factor = _validate_factor_tuple(factor)
         self.dens = density
         self.display_threshold = display_threshold
-        if plot_args is None:
-            plot_args = def_plot_args
+
+        if plot_args is not None:
+            issue_deprecation_warning(
+                "`plot_args` is deprecated. "
+                "You can now pass arbitrary keyword arguments instead of a dictionary.",
+                since="4.1.0",
+            )
+            plot_args.update(kwargs)
+        else:
+            plot_args = kwargs
+
         self.plot_args = plot_args
 
     def __call__(self, plot):
@@ -1204,7 +1319,8 @@ class LinePlotCallback(PlotCallback):
     ...     [0.1, 0.2, 0.3],
     ...     [0.5, 0.6, 0.7],
     ...     coord_system="data",
-    ...     plot_args={"color": "red", "lineStyles": "--"},
+    ...     color="red",
+    ...     linestyles="--",
     ... )
     >>> s.save()
 
@@ -1218,21 +1334,28 @@ class LinePlotCallback(PlotCallback):
         "cylindrical",
     )
 
-    def __init__(self, p1, p2, data_coords=False, coord_system="data", plot_args=None):
+    def __init__(
+        self,
+        p1,
+        p2,
+        *,
+        coord_system="data",
+        plot_args: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ):
         def_plot_args = {"color": "white", "linewidth": 2}
+
         self.p1 = p1
         self.p2 = p2
-        if plot_args is None:
-            plot_args = def_plot_args
-        self.plot_args = plot_args
-        if data_coords:
-            coord_system = "data"
+        if plot_args is not None:
             issue_deprecation_warning(
-                "The data_coords keyword is deprecated.  Please set "
-                "the keyword coord_system='data' instead.",
-                since="3.2",
-                removal="4.2",
+                "`plot_args` is deprecated. "
+                "You can now pass arbitrary keyword arguments instead of a dictionary.",
+                since="4.1.0",
             )
+            plot_args.update(kwargs)
+
+        self.plot_args = {**def_plot_args, **kwargs}
         self.coord_system = coord_system
         self.transform = None
 
@@ -1244,32 +1367,6 @@ class LinePlotCallback(PlotCallback):
             start_pt, end_pt = [p2[0], p1[0]], [p2[1], p1[1]]
         plot._axes.plot(start_pt, end_pt, transform=self.transform, **self.plot_args)
         self._set_plot_limits(plot)
-
-
-class ImageLineCallback(LinePlotCallback):
-    """
-    This callback is deprecated, as it is simply a wrapper around
-    the LinePlotCallback (ie annotate_image()).  The only difference is
-    that it uses coord_system="axis" by default. Please see LinePlotCallback
-    for more information.
-
-    """
-
-    _type_name = "image_line"
-    _supported_geometries = ("cartesian", "spectral_cube", "cylindrical")
-
-    def __init__(self, p1, p2, data_coords=False, coord_system="axis", plot_args=None):
-        super().__init__(p1, p2, data_coords, coord_system, plot_args)
-        issue_deprecation_warning(
-            "The ImageLineCallback (annotate_image_line()) is "
-            "deprecated.  Please use the LinePlotCallback "
-            "(annotate_line()) instead.",
-            since="3.2",
-            removal="4.2",
-        )
-
-    def __call__(self, plot):
-        super().__call__(plot)
 
 
 class CuttingQuiverCallback(BaseQuiverCallback):
@@ -1357,11 +1454,19 @@ class ClumpContourCallback(PlotCallback):
 
     _type_name = "clumps"
     _supported_geometries = ("cartesian", "spectral_cube", "cylindrical")
+    _incompatible_plot_types = ("OffAxisSlice", "OffAxisProjection", "Particle")
 
-    def __init__(self, clumps, plot_args=None):
+    def __init__(self, clumps, *, plot_args=None, **kwargs):
         self.clumps = clumps
-        if plot_args is None:
-            plot_args = {}
+        if plot_args is not None:
+            issue_deprecation_warning(
+                "`plot_args` is deprecated. "
+                "You can now pass arbitrary keyword arguments instead of a dictionary.",
+                since="4.1.0",
+            )
+            plot_args.update(kwargs)
+        else:
+            plot_args = kwargs
         if "color" in plot_args:
             plot_args["colors"] = plot_args.pop("color")
         self.plot_args = plot_args
@@ -1493,7 +1598,7 @@ class ArrowCallback(PlotCallback):
     >>> ds = yt.load("IsolatedGalaxy/galaxy0030/galaxy0030")
     >>> s = yt.SlicePlot(ds, "z", "density")
     >>> s.annotate_arrow(
-    ...     [0.1, -0.1], length=0.06, coord_system="plot", plot_args={"color": "red"}
+    ...     [0.1, -0.1], length=0.06, coord_system="plot", color="red"
     ... )
     >>> s.save()
 
@@ -1505,18 +1610,18 @@ class ArrowCallback(PlotCallback):
     def __init__(
         self,
         pos,
-        code_size=None,
+        *,
         length=0.03,
         width=0.0001,
         head_width=0.01,
         head_length=0.01,
         starting_pos=None,
         coord_system="data",
-        plot_args=None,
+        plot_args: Optional[Dict[str, Any]] = None,  # deprecated
+        **kwargs,
     ):
         def_plot_args = {"color": "white"}
         self.pos = pos
-        self.code_size = code_size
         self.length = length
         self.width = width
         self.head_width = head_width
@@ -1524,7 +1629,15 @@ class ArrowCallback(PlotCallback):
         self.starting_pos = starting_pos
         self.coord_system = coord_system
         self.transform = None
-        if plot_args is None:
+
+        if plot_args is not None:
+            issue_deprecation_warning(
+                "`plot_args` is deprecated. "
+                "You can now pass arbitrary keyword arguments instead of a dictionary.",
+                since="4.1.0",
+            )
+            plot_args = {**def_plot_args, **plot_args, **kwargs}
+        else:
             plot_args = def_plot_args
         self.plot_args = plot_args
 
@@ -1540,29 +1653,16 @@ class ArrowCallback(PlotCallback):
         self.head_width *= plot_diag
         if self.head_length is not None:
             self.head_length *= plot_diag
-        if self.code_size is not None:
-            issue_deprecation_warning(
-                "The code_size keyword is deprecated.  Please use "
-                "the length keyword in 'axis' units instead. "
-                "Setting code_size overrides length value.",
-                since="3.2",
-                removal="4.2",
+
+        if self.starting_pos is not None:
+            start_x, start_y = self._sanitize_coord_system(
+                plot, self.starting_pos, coord_system=self.coord_system
             )
-            if is_sequence(self.code_size):
-                self.code_size = plot.data.ds.quan(self.code_size[0], self.code_size[1])
-                self.code_size = np.float64(self.code_size.in_units(plot.xlim[0].units))
-            self.code_size = self.code_size * self._pixel_scale(plot)[0]
-            dx = dy = self.code_size
+            dx = x - start_x
+            dy = y - start_y
         else:
-            if self.starting_pos is not None:
-                start_x, start_y = self._sanitize_coord_system(
-                    plot, self.starting_pos, coord_system=self.coord_system
-                )
-                dx = x - start_x
-                dy = y - start_y
-            else:
-                dx = (xx1 - xx0) * 2 ** (0.5) * self.length
-                dy = (yy1 - yy0) * 2 ** (0.5) * self.length
+            dx = (xx1 - xx0) * 2 ** (0.5) * self.length
+            dy = (yy1 - yy0) * 2 ** (0.5) * self.length
         # If the arrow is 0 length
         if dx == dy == 0:
             warnings.warn("The arrow has zero length.  Not annotating.")
@@ -1650,7 +1750,8 @@ class MarkerAnnotateCallback(PlotCallback):
     ...     [0.1, 0.2],
     ...     marker="o",
     ...     coord_system="axis",
-    ...     plot_args={"color": "yellow", "s": 200},
+    ...     color="yellow",
+    ...     s=200,
     ... )
     >>> s.save()
 
@@ -1659,12 +1760,21 @@ class MarkerAnnotateCallback(PlotCallback):
     _type_name = "marker"
     _supported_geometries = ("cartesian", "spectral_cube", "polar", "cylindrical")
 
-    def __init__(self, pos, marker="x", coord_system="data", plot_args=None):
+    def __init__(
+        self, pos, marker="x", *, coord_system="data", plot_args=None, **kwargs
+    ):
         def_plot_args = {"color": "w", "s": 50}
         self.pos = pos
         self.marker = marker
-        if plot_args is None:
-            plot_args = def_plot_args
+        if plot_args is not None:
+            issue_deprecation_warning(
+                "`plot_args` is deprecated. "
+                "You can now pass arbitrary keyword arguments instead of a dictionary.",
+                since="4.1.0",
+            )
+            plot_args = {**def_plot_args, **plot_args, **kwargs}
+        else:
+            plot_args = {**def_plot_args, **kwargs}
         self.plot_args = plot_args
         self.coord_system = coord_system
         self.transform = None
@@ -1736,9 +1846,10 @@ class SphereCallback(PlotCallback):
         self,
         center,
         radius,
-        circle_args=None,
-        text=None,
+        *,
         coord_system="data",
+        text=None,
+        circle_args=None,
         text_args=None,
     ):
         def_text_args = {"color": "white"}
@@ -1876,7 +1987,7 @@ class TextLabelCallback(PlotCallback):
         self,
         pos,
         text,
-        data_coords=False,
+        *,
         coord_system="data",
         text_args=None,
         inset_box_args=None,
@@ -1884,14 +1995,6 @@ class TextLabelCallback(PlotCallback):
         def_text_args = {"color": "white"}
         self.pos = pos
         self.text = text
-        if data_coords:
-            coord_system = "data"
-            issue_deprecation_warning(
-                "The data_coords keyword is deprecated.  Please set "
-                "the keyword coord_system='data' instead.",
-                since="3.2",
-                removal="4.2",
-            )
         if text_args is None:
             text_args = def_text_args
         self.text_args = text_args
@@ -1915,295 +2018,6 @@ class TextLabelCallback(PlotCallback):
         self._set_plot_limits(plot)
 
 
-class PointAnnotateCallback(TextLabelCallback):
-    """
-    This callback is deprecated, as it is simply a wrapper around
-    the TextLabelCallback (ie annotate_text()).  Please see TextLabelCallback
-    for more information.
-
-    """
-
-    _type_name = "point"
-    _supported_geometries = ("cartesian", "spectral_cube", "cylindrical")
-
-    def __init__(
-        self,
-        pos,
-        text,
-        data_coords=False,
-        coord_system="data",
-        text_args=None,
-        inset_box_args=None,
-    ):
-        super().__init__(
-            pos, text, data_coords, coord_system, text_args, inset_box_args
-        )
-        issue_deprecation_warning(
-            "The PointAnnotateCallback (annotate_point()) is "
-            "deprecated.  Please use the TextLabelCallback "
-            "(annotate_point()) instead.",
-            since="3.2",
-            removal="4.2",
-        )
-
-    def __call__(self, plot):
-        super().__call__(plot)
-
-
-class HaloCatalogCallback(PlotCallback):
-    """
-    Plots circles at the locations of all the halos
-    in a halo catalog with radii corresponding to the
-    virial radius of each halo.
-
-    Note, this functionality requires the yt_astro_analysis
-    package. See https://yt-astro-analysis.readthedocs.io/
-    for more information.
-
-    Parameters
-    ----------
-    halo_catalog : Dataset, DataContainer,
-                   or ~yt.analysis_modules.halo_analysis.halo_catalog.HaloCatalog
-        The object containing halos to be overplotted. This can
-        be a HaloCatalog object, a loaded halo catalog dataset,
-        or a data container from a halo catalog dataset.
-    circle_args : list
-        Contains the arguments controlling the
-        appearance of the circles, supplied to the
-        Matplotlib patch Circle.
-    width : tuple
-        The width over which to select halos to plot,
-        useful when overplotting to a slice plot. Accepts
-        a tuple in the form (1.0, 'Mpc').
-    annotate_field : str
-        A field contained in the
-        halo catalog to add text to the plot near the halo.
-        Example: annotate_field = 'particle_mass' will
-        write the halo mass next to each halo.
-    radius_field : str
-        A field contained in the halo
-        catalog to set the radius of the circle which will
-        surround each halo. Default: 'virial_radius'.
-    center_field_prefix : str
-        Accepts a field prefix which will
-        be used to find the fields containing the coordinates
-        of the center of each halo. Ex: 'particle_position'
-        will result in the fields 'particle_position_x' for x
-        'particle_position_y' for y, and 'particle_position_z'
-        for z. Default: 'particle_position'.
-    text_args : dict
-        Contains the arguments controlling the text
-        appearance of the annotated field.
-    factor : float
-        A number the virial radius is multiplied by for
-        plotting the circles. Ex: factor = 2.0 will plot
-        circles with twice the radius of each halo virial radius.
-
-    Examples
-    --------
-
-    >>> import yt
-    >>> dds = yt.load("Enzo_64/DD0043/data0043")
-    >>> hds = yt.load("rockstar_halos/halos_0.0.bin")
-    >>> p = yt.ProjectionPlot(
-    ...     dds, "x", ("gas", "density"), weight_field=("gas", "density")
-    ... )
-    >>> p.annotate_halos(hds)
-    >>> p.save()
-
-    >>> # plot a subset of all halos
-    >>> import yt
-    >>> dds = yt.load("Enzo_64/DD0043/data0043")
-    >>> hds = yt.load("rockstar_halos/halos_0.0.bin")
-    >>> # make a region half the width of the box
-    >>> dregion = dds.box(
-    ...     dds.domain_center - 0.25 * dds.domain_width,
-    ...     dds.domain_center + 0.25 * dds.domain_width,
-    ... )
-    >>> hregion = hds.box(
-    ...     hds.domain_center - 0.25 * hds.domain_width,
-    ...     hds.domain_center + 0.25 * hds.domain_width,
-    ... )
-    >>> p = yt.ProjectionPlot(
-    ...     dds,
-    ...     "x",
-    ...     ("gas", "density"),
-    ...     weight_field=("gas", "density"),
-    ...     data_source=dregion,
-    ...     width=0.5,
-    ... )
-    >>> p.annotate_halos(hregion)
-    >>> p.save()
-
-    >>> # plot halos from a HaloCatalog
-    >>> import yt
-    >>> from yt.extensions.astro_analysis.halo_analysis.api import HaloCatalog
-    >>> dds = yt.load("Enzo_64/DD0043/data0043")
-    >>> hds = yt.load("rockstar_halos/halos_0.0.bin")
-    >>> hc = HaloCatalog(data_ds=dds, halos_ds=hds)
-    >>> p = yt.ProjectionPlot(
-    ...     dds, "x", ("gas", "density"), weight_field=("gas", "density")
-    ... )
-    >>> p.annotate_halos(hc)
-    >>> p.save()
-
-    """
-
-    _type_name = "halos"
-    region = None
-    _descriptor = None
-    _supported_geometries = ("cartesian", "spectral_cube")
-
-    def __init__(
-        self,
-        halo_catalog,
-        circle_args=None,
-        circle_kwargs=None,
-        width=None,
-        annotate_field=None,
-        radius_field="virial_radius",
-        center_field_prefix="particle_position",
-        text_args=None,
-        font_kwargs=None,
-        factor=1.0,
-    ):
-        issue_deprecation_warning(
-            "The annotate_halos method has been fully migrated to the "
-            "yt_astro_analysis extension. "
-            "Please update the extension to version 1.1 or newer. "
-            "This duplicated functionality will be removed from the main yt package.",
-            since="4.1",
-            removal="4.2",
-        )
-
-        try:
-            from yt_astro_analysis.halo_analysis.api import HaloCatalog
-        except ImportError:
-            HaloCatalog = NotAModule("yt_astro_analysis")
-
-        def_circle_args = {"edgecolor": "white", "facecolor": "None"}
-        def_text_args = {"color": "white"}
-
-        if isinstance(halo_catalog, YTDataContainer):
-            self.halo_data = halo_catalog
-        elif isinstance(halo_catalog, Dataset):
-            self.halo_data = halo_catalog.all_data()
-        elif isinstance(halo_catalog, HaloCatalog):
-            if halo_catalog.data_source.ds == halo_catalog.halos_ds:
-                self.halo_data = halo_catalog.data_source
-            else:
-                self.halo_data = halo_catalog.halos_ds.all_data()
-        else:
-            raise RuntimeError(
-                "halo_catalog argument must be a HaloCatalog object, "
-                + "a dataset, or a data container."
-            )
-
-        self.width = width
-        self.radius_field = radius_field
-        self.center_field_prefix = center_field_prefix
-        self.annotate_field = annotate_field
-        if circle_kwargs is not None:
-            circle_args = circle_kwargs
-            issue_deprecation_warning(
-                "The circle_kwargs keyword is deprecated.  Please "
-                "use the circle_args keyword instead.",
-                since="3.2",
-                removal="4.2",
-            )
-        if font_kwargs is not None:
-            text_args = font_kwargs
-            issue_deprecation_warning(
-                "The font_kwargs keyword is deprecated.  Please use "
-                "the text_args keyword instead.",
-                since="3.2",
-                removal="4.2",
-            )
-        if circle_args is None:
-            circle_args = def_circle_args
-        self.circle_args = circle_args
-        if text_args is None:
-            text_args = def_text_args
-        self.text_args = text_args
-        self.factor = factor
-
-    def __call__(self, plot):
-        from matplotlib.patches import Circle
-
-        data = plot.data
-
-        halo_data = self.halo_data
-        axis_names = plot.data.ds.coordinates.axis_name
-        xax = plot.data.ds.coordinates.x_axis[data.axis]
-        yax = plot.data.ds.coordinates.y_axis[data.axis]
-        field_x = f"{self.center_field_prefix}_{axis_names[xax]}"
-        field_y = f"{self.center_field_prefix}_{axis_names[yax]}"
-        field_z = f"{self.center_field_prefix}_{axis_names[data.axis]}"
-
-        # Set up scales for pixel size and original data
-        pixel_scale = self._pixel_scale(plot)[0]
-        units = plot.xlim[0].units
-
-        # Convert halo positions to code units of the plotted data
-        # and then to units of the plotted window
-        px = halo_data[("all", field_x)][:].in_units(units)
-        py = halo_data[("all", field_y)][:].in_units(units)
-
-        xplotcenter = (plot.xlim[0] + plot.xlim[1]) / 2
-        yplotcenter = (plot.ylim[0] + plot.ylim[1]) / 2
-
-        xdomaincenter = plot.ds.domain_center[xax]
-        ydomaincenter = plot.ds.domain_center[yax]
-
-        xoffset = xplotcenter - xdomaincenter
-        yoffset = yplotcenter - ydomaincenter
-
-        xdw = plot.ds.domain_width[xax].to(units)
-        ydw = plot.ds.domain_width[yax].to(units)
-
-        modpx = np.mod(px - xoffset, xdw) + xoffset
-        modpy = np.mod(py - yoffset, ydw) + yoffset
-
-        px[modpx != px] = modpx[modpx != px]
-        py[modpy != py] = modpy[modpy != py]
-
-        px, py = self._convert_to_plot(plot, [px, py])
-
-        # Convert halo radii to a radius in pixels
-        radius = halo_data[("all", self.radius_field)][:].in_units(units)
-        radius = np.array(radius * pixel_scale * self.factor)
-
-        if self.width:
-            pz = halo_data[("all", field_z)][:].in_units("code_length")
-            c = data.center[data.axis]
-
-            # I should catch an error here if width isn't in this form
-            # but I dont really want to reimplement get_sanitized_width...
-            width = data.ds.arr(self.width[0], self.width[1]).in_units("code_length")
-
-            indices = np.where((pz > c - 0.5 * width) & (pz < c + 0.5 * width))
-
-            px = px[indices]
-            py = py[indices]
-            radius = radius[indices]
-
-        px, py = self._sanitize_xy_order(plot, px, py)
-        for x, y, r in zip(px, py, radius):
-            plot._axes.add_artist(Circle(xy=(x, y), radius=r, **self.circle_args))
-        self._set_plot_limits(plot)
-
-        if self.annotate_field:
-            annotate_dat = halo_data[("all", self.annotate_field)]
-            texts = [f"{float(dat):g}" for dat in annotate_dat]
-            labels = []
-            for pos_x, pos_y, t in zip(px, py, texts):
-                labels.append(plot._axes.text(pos_x, pos_y, t, **self.text_args))
-
-            # Set the font properties of text from this callback to be
-            # consistent with other text labels in this figure
-            self._set_font_properties(plot, labels, **self.text_args)
-
-
 class ParticleCallback(PlotCallback):
     """
     Adds particle positions, based on a thick slab along *axis* with a
@@ -2219,6 +2033,7 @@ class ParticleCallback(PlotCallback):
     region = None
     _descriptor = None
     _supported_geometries = ("cartesian", "spectral_cube", "cylindrical")
+    _incompatible_plot_types = ("OffAxisSlice", "OffAxisProjection")
 
     def __init__(
         self,
@@ -2228,7 +2043,6 @@ class ParticleCallback(PlotCallback):
         marker="o",
         stride=1,
         ptype="all",
-        minimum_mass=None,
         alpha=1.0,
         data_source=None,
     ):
@@ -2238,16 +2052,8 @@ class ParticleCallback(PlotCallback):
         self.marker = marker
         self.stride = stride
         self.ptype = ptype
-        self.minimum_mass = minimum_mass
         self.alpha = alpha
         self.data_source = data_source
-        if self.minimum_mass is not None:
-            issue_deprecation_warning(
-                "The minimum_mass keyword is deprecated.  Please use "
-                "an appropriate particle filter and the ptype keyword instead.",
-                since="3.5",
-                removal="4.2",
-            )
 
     def __call__(self, plot):
         data = plot.data
@@ -2301,10 +2107,6 @@ class ParticleCallback(PlotCallback):
             & (particle_y >= y0)
             & (particle_y <= y1)
         )
-        if self.minimum_mass is not None:
-            gg &= self.region[pt, "particle_mass"] >= self.minimum_mass
-            if gg.sum() == 0:
-                return
         px, py = [particle_x[gg][:: self.stride], particle_y[gg][:: self.stride]]
         px, py = self._convert_to_plot(plot, [px, py])
         px, py = self._sanitize_xy_order(plot, px, py)
@@ -2395,15 +2197,24 @@ class MeshLinesCallback(PlotCallback):
     >>> import yt
     >>> ds = yt.load("MOOSE_sample_data/out.e-s010")
     >>> sl = yt.SlicePlot(ds, "z", ("connect2", "convected"))
-    >>> sl.annotate_mesh_lines(plot_args={"color": "black"})
+    >>> sl.annotate_mesh_lines(color="black")
 
     """
 
     _type_name = "mesh_lines"
     _supported_geometries = ("cartesian", "spectral_cube")
+    _incompatible_plot_types = ("OffAxisSlice", "OffAxisProjection")
 
-    def __init__(self, plot_args=None):
-        super().__init__()
+    def __init__(self, *, plot_args=None, **kwargs):
+        if plot_args is not None:
+            issue_deprecation_warning(
+                "`plot_args` is deprecated. "
+                "You can now pass arbitrary keyword arguments instead of a dictionary.",
+                since="4.1.0",
+            )
+            plot_args.update(kwargs)
+        else:
+            plot_args = kwargs
         self.plot_args = plot_args
 
     def promote_2d_to_3d(self, coords, indices, plot):
@@ -2451,7 +2262,7 @@ class MeshLinesCallback(PlotCallback):
             tri_indices = triangulate_indices(indices.astype(np.int_))
             points = coords[tri_indices]
 
-            tfc = TriangleFacetsCallback(points, plot_args=self.plot_args)
+            tfc = TriangleFacetsCallback(points, **self.plot_args)
             tfc(plot)
 
 
@@ -2469,9 +2280,17 @@ class TriangleFacetsCallback(PlotCallback):
     _type_name = "triangle_facets"
     _supported_geometries = ("cartesian", "spectral_cube")
 
-    def __init__(self, triangle_vertices, plot_args=None):
-        super().__init__()
-        self.plot_args = {} if plot_args is None else plot_args
+    def __init__(self, triangle_vertices, *, plot_args=None, **kwargs):
+        if plot_args is not None:
+            issue_deprecation_warning(
+                "`plot_args` is deprecated. "
+                "You can now pass arbitrary keyword arguments instead of a dictionary.",
+                since="4.1.0",
+            )
+            plot_args.update(kwargs)
+        else:
+            plot_args = kwargs
+        self.plot_args = kwargs
         self.vertices = triangle_vertices
 
     def __call__(self, plot):
@@ -2602,6 +2421,7 @@ class TimestampCallback(PlotCallback):
         x_pos=None,
         y_pos=None,
         corner="lower_left",
+        *,
         time=True,
         redshift=False,
         time_format="t = {time:.1f} {units}",
@@ -2836,6 +2656,7 @@ class ScaleCallback(PlotCallback):
 
     def __init__(
         self,
+        *,
         corner="lower_right",
         coeff=None,
         unit=None,
@@ -3033,12 +2854,19 @@ class RayCallback(PlotCallback):
     _type_name = "ray"
     _supported_geometries = ("cartesian", "spectral_cube", "force")
 
-    def __init__(self, ray, arrow=False, plot_args=None):
+    def __init__(self, ray, *, arrow=False, plot_args=None, **kwargs):
         def_plot_args = {"color": "white", "linewidth": 2}
         self.ray = ray
         self.arrow = arrow
-        if plot_args is None:
-            plot_args = def_plot_args
+        if plot_args is not None:
+            issue_deprecation_warning(
+                "`plot_args` is deprecated. "
+                "You can now pass arbitrary keyword arguments instead of a dictionary.",
+                since="4.1.0",
+            )
+            plot_args = {**def_plot_args, **plot_args, **kwargs}
+        else:
+            plot_args = {**def_plot_args, **kwargs}
         self.plot_args = plot_args
 
     def _process_ray(self):
@@ -3113,7 +2941,7 @@ class RayCallback(PlotCallback):
         # and all other ray segments are lines
         for segment in segments[:-1]:
             cb = LinePlotCallback(
-                segment[0], segment[1], coord_system="data", plot_args=self.plot_args
+                segment[0], segment[1], coord_system="data", **self.plot_args
             )
             cb(plot)
         segment = segments[-1]
@@ -3122,11 +2950,11 @@ class RayCallback(PlotCallback):
                 segment[1],
                 starting_pos=segment[0],
                 coord_system="data",
-                plot_args=self.plot_args,
+                **self.plot_args,
             )
         else:
             cb = LinePlotCallback(
-                segment[0], segment[1], coord_system="data", plot_args=self.plot_args
+                segment[0], segment[1], coord_system="data", **self.plot_args
             )
         cb(plot)
         return plot
@@ -3183,6 +3011,7 @@ class LineIntegralConvolutionCallback(PlotCallback):
 
     _type_name = "line_integral_convolution"
     _supported_geometries = ("cartesian", "spectral_cube", "polar", "cylindrical")
+    _incompatible_plot_types = ("LineIntegralConvolutionCallback",)
 
     def __init__(
         self,

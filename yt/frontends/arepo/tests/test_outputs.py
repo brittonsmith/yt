@@ -3,12 +3,12 @@ import tempfile
 from collections import OrderedDict
 
 from yt.frontends.arepo.api import ArepoHDF5Dataset
-from yt.testing import ParticleSelectionComparison, requires_file
+from yt.testing import ParticleSelectionComparison, assert_allclose_units, requires_file
 from yt.utilities.answer_testing.framework import data_dir_load, requires_ds, sph_answer
 
 bullet_h5 = "ArepoBullet/snapshot_150.hdf5"
 tng59_h5 = "TNGHalo/halo_59.hdf5"
-_tng59_bbox = [[45135.0, 51343.0], [51844.0, 56184.0], [60555.0, 63451.0]]
+_tng59_bbox = [[40669.34, 56669.34], [45984.04, 61984.04], [54114.9, 70114.9]]
 cr_h5 = "ArepoCosmicRays/snapshot_039.hdf5"
 
 
@@ -63,6 +63,14 @@ def test_arepo_tng59():
 
 
 @requires_ds(tng59_h5)
+def test_arepo_tng59_periodicity():
+    ds1 = data_dir_load(tng59_h5)
+    assert ds1.periodicity == (True, True, True)
+    ds2 = data_dir_load(tng59_h5, kwargs={"bounding_box": _tng59_bbox})
+    assert ds2.periodicity == (False, False, False)
+
+
+@requires_ds(tng59_h5)
 def test_index_override():
     # This tests that we can supply an index_filename, and that when we do, it
     # doesn't get written if our bounding_box is overwritten.
@@ -74,6 +82,15 @@ def test_index_override():
     assert isinstance(ds, ArepoHDF5Dataset)
     ds.index
     assert len(open(tmpname).read()) == 0
+
+
+@requires_file(tng59_h5)
+def test_nh_density():
+    ds = data_dir_load(tng59_h5, kwargs={"bounding_box": _tng59_bbox})
+    ad = ds.all_data()
+    assert_allclose_units(
+        ad["gas", "H_number_density"], (ad["gas", "H_nuclei_density"])
+    )
 
 
 @requires_file(tng59_h5)

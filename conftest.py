@@ -1,11 +1,10 @@
 import os
 import shutil
 import tempfile
+from importlib.metadata import version
 from importlib.util import find_spec
 from pathlib import Path
 
-import matplotlib
-import numpy
 import pytest
 import yaml
 from packaging.version import Version
@@ -20,8 +19,9 @@ from yt.utilities.answer_testing.testing_utilities import (
     data_dir_load,
 )
 
-MPL_VERSION = Version(matplotlib.__version__)
-NUMPY_VERSION = Version(numpy.__version__)
+MPL_VERSION = Version(version("matplotlib"))
+NUMPY_VERSION = Version(version("numpy"))
+PILLOW_VERSION = Version(version("pillow"))
 
 
 def pytest_addoption(parser):
@@ -90,7 +90,7 @@ def pytest_configure(config):
         "ignore:the imp module is deprecated in favour of importlib and slated for removal in Python 3.12; see the module's documentation for alternative uses:DeprecationWarning",
         # matplotlib warnings related to the Agg backend which is used in CI, not much we can do about it
         "ignore:Matplotlib is currently using agg, which is a non-GUI backend, so cannot show the figure.:UserWarning",
-        "ignore:tight_layout . falling back to Agg renderer:UserWarning",
+        r"ignore:tight_layout.+falling back to Agg renderer:UserWarning",
         #
         # >>> warnings from wrong values passed to numpy
         # these should normally be curated out of the test suite but they are too numerous
@@ -109,40 +109,18 @@ def pytest_configure(config):
     ):
         config.addinivalue_line("filterwarnings", value)
 
-    if MPL_VERSION < Version("3.0.0"):
+    if MPL_VERSION < Version("3.5.2") and PILLOW_VERSION >= Version("9.1"):
+        # see https://github.com/matplotlib/matplotlib/pull/22766
         config.addinivalue_line(
             "filterwarnings",
-            (
-                "ignore:Using or importing the ABCs from 'collections' instead of from 'collections.abc' "
-                "is deprecated since Python 3.3,and in 3.9 it will stop working:DeprecationWarning"
-            ),
+            r"ignore:NONE is deprecated and will be removed in Pillow 10 \(2023-07-01\)\. "
+            r"Use Resampling\.NEAREST or Dither\.NONE instead\.:DeprecationWarning",
         )
-
-    if MPL_VERSION < Version("3.5.2"):
-        if MPL_VERSION < Version("3.3"):
-            try:
-                import PIL
-            except ImportError:
-                PILLOW_INSTALLED = False
-            else:
-                PILLOW_INSTALLED = True
-        else:
-            # pillow became a hard dependency in matplotlib 3.3
-            import PIL
-
-            PILLOW_INSTALLED = True
-        if PILLOW_INSTALLED and Version(PIL.__version__) >= Version("9.1"):
-            # see https://github.com/matplotlib/matplotlib/pull/22766
-            config.addinivalue_line(
-                "filterwarnings",
-                r"ignore:NONE is deprecated and will be removed in Pillow 10 \(2023-07-01\)\. "
-                r"Use Resampling\.NEAREST or Dither\.NONE instead\.:DeprecationWarning",
-            )
-            config.addinivalue_line(
-                "filterwarnings",
-                r"ignore:ADAPTIVE is deprecated and will be removed in Pillow 10 \(2023-07-01\)\. "
-                r"Use Palette\.ADAPTIVE instead\.:DeprecationWarning",
-            )
+        config.addinivalue_line(
+            "filterwarnings",
+            r"ignore:ADAPTIVE is deprecated and will be removed in Pillow 10 \(2023-07-01\)\. "
+            r"Use Palette\.ADAPTIVE instead\.:DeprecationWarning",
+        )
 
     if NUMPY_VERSION < Version("1.19") and MPL_VERSION < Version("3.3"):
         # This warning is triggered from matplotlib in exactly one test at the time of writing
@@ -163,26 +141,6 @@ def pytest_configure(config):
                 "ignore:numpy.ndarray size changed, may indicate binary incompatibility. Expected "
                 r"(80 from C header, got 88|88 from C header, got 96|80 from C header, got 96)"
                 " from PyObject:RuntimeWarning"
-            ),
-        )
-
-    if find_spec("cartopy") is not None:
-        # This can be removed when cartopy 0.21 is released
-        # see https://github.com/SciTools/cartopy/pull/1957
-        config.addinivalue_line(
-            "filterwarnings",
-            (
-                r"ignore:The default value for the \*approx\* keyword argument to "
-                r"\w+ will change from True to False after 0\.18\.:UserWarning"
-            ),
-        )
-        # this one could be resolved by upgrading PROJ on Jenkins,
-        # but there's isn't much else that can be done about it.
-        config.addinivalue_line(
-            "filterwarnings",
-            (
-                "ignore:The Stereographic projection in Proj older than 5.0.0 incorrectly "
-                "transforms points when central_latitude=0. Use this projection with caution.:UserWarning"
             ),
         )
 

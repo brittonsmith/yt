@@ -5,7 +5,6 @@ AMRVAC data structures
 
 """
 import os
-import stat
 import struct
 import sys
 import warnings
@@ -314,7 +313,6 @@ class AMRVACDataset(Dataset):
     def _parse_parameter_file(self):
         """Parse input datfile's header. Apply geometry_override if specified."""
         # required method
-        self.unique_identifier = int(os.stat(self.parameter_filename)[stat.ST_CTIME])
 
         # populate self.parameters with header data
         with open(self.parameter_filename, "rb") as istream:
@@ -343,14 +341,12 @@ class AMRVACDataset(Dataset):
         if amrvac_geom is not None:
             self.geometry = self._parse_geometry(amrvac_geom)
         elif self.parameters["datfile_version"] > 4:
-            # py38: walrus here
             mylog.error(
                 "No 'geometry' flag found in datfile with version %d >4.",
                 self.parameters["datfile_version"],
             )
 
         if self._geometry_override is not None:
-            # py38: walrus here
             try:
                 new_geometry = self._parse_geometry(self._geometry_override)
                 if new_geometry == self.geometry:

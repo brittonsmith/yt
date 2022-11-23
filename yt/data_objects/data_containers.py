@@ -6,13 +6,15 @@ from typing import List, Tuple, Union
 
 import numpy as np
 
+from yt._maintenance.deprecation import issue_deprecation_warning
 from yt.config import ytcfg
 from yt.data_objects.field_data import YTFieldData
 from yt.data_objects.profiles import create_profile
 from yt.fields.field_exceptions import NeedsGridType
 from yt.frontends.ytdata.utilities import save_as_dataset
 from yt.funcs import get_output_filename, is_sequence, iter_fields, mylog
-from yt.units.yt_array import YTArray, YTQuantity, uconcatenate  # type: ignore
+from yt.units._numpy_wrapper_functions import uconcatenate
+from yt.units.yt_array import YTArray, YTQuantity
 from yt.utilities.amr_kdtree.api import AMRKDTree
 from yt.utilities.exceptions import (
     YTCouldNotGenerateField,
@@ -703,13 +705,15 @@ class YTDataContainer(abc.ABC):
 
     def create_firefly_object(
         self,
-        JSONdir,
+        datadir=None,
         fields_to_include=None,
         fields_units=None,
         default_decimation_factor=100,
         velocity_units="km/s",
         coordinate_units="kpc",
         show_unused_fields=0,
+        *,
+        JSONdir=None,
         **kwargs,
     ):
         r"""This function links a region of data stored in a yt dataset
@@ -719,9 +723,9 @@ class YTDataContainer(abc.ABC):
         Parameters
         ----------
 
-        JSONdir : string
+        datadir : string
             Path to where any `.json` files should be saved. If a relative
-            path will assume relative to `${HOME}`
+            path will assume relative to `${HOME}`. A value of `None` will default to `${HOME}/Data`.
 
         fields_to_include : array_like of strings
             A list of fields that you want to include in your
@@ -736,7 +740,7 @@ class YTDataContainer(abc.ABC):
             not overtax a system. This is adjustable on a per particle group
             basis by changing the returned reader's
             `reader.particleGroup[i].decimation_factor` before calling
-            `reader.dumpToJSON()`.
+            `reader.writeToDisk()`.
 
         velocity_units : string
             The units that the velocity should be converted to in order to
@@ -749,6 +753,9 @@ class YTDataContainer(abc.ABC):
         show_unused_fields : boolean
             A flag to optionally print the fields that are available, in the
             dataset but were not explicitly requested to be tracked.
+
+        Any additional keyword arguments are passed to
+        firefly.data_reader.Reader.__init__
 
         Returns
         -------
@@ -775,9 +782,9 @@ class YTDataContainer(abc.ABC):
             ...     fields_units=["dimensionless", "dimensionless"],
             ... )
 
-            >>> reader.options["color"]["io"] = [1, 1, 0, 1]
+            >>> reader.settings["color"]["io"] = [1, 1, 0, 1]
             >>> reader.particleGroups[0].decimation_factor = 100
-            >>> reader.dumpToJSON()
+            >>> reader.writeToDisk()
         """
 
         ## handle default arguments
@@ -793,9 +800,17 @@ class YTDataContainer(abc.ABC):
         ## for safety, in case someone passes a float just cast it
         default_decimation_factor = int(default_decimation_factor)
 
+        if JSONdir is not None:
+            issue_deprecation_warning(
+                "The 'JSONdir' keyword argument is a deprecated alias for 'datadir'."
+                "Please use 'datadir' directly.",
+                since="4.1",
+            )
+            datadir = JSONdir
+
         ## initialize a firefly reader instance
         reader = firefly.data_reader.Reader(
-            JSONdir=JSONdir, clean_JSONdir=True, **kwargs
+            datadir=datadir, clean_datadir=True, **kwargs
         )
 
         ## create a ParticleGroup object that contains *every* field
@@ -816,11 +831,8 @@ class YTDataContainer(abc.ABC):
                             "detected (but did not request) %s %s", ptype, field
                         )
 
-            ## you must have velocities (and they must be named "Velocities")
-            tracked_arrays = [
-                self[ptype, "relative_particle_velocity"].in_units(velocity_units)
-            ]
-            tracked_names = ["Velocities"]
+            field_arrays = []
+            field_names = []
 
             ## explicitly go after the fields we want
             for field, units in zip(fields_to_include, fields_units):
@@ -843,14 +855,14 @@ class YTDataContainer(abc.ABC):
                     this_field_array = np.log10(this_field_array)
 
                 ## add this array to the tracked arrays
-                tracked_arrays += [this_field_array]
-                tracked_names = np.append(tracked_names, [field], axis=0)
+                field_arrays += [this_field_array]
+                field_names = np.append(field_names, [field], axis=0)
 
             ## flag whether we want to filter and/or color by these fields
             ##  we'll assume yes for both cases, this can be changed after
             ##  the reader object is returned to the user.
-            tracked_filter_flags = np.ones(len(tracked_names))
-            tracked_colormap_flags = np.ones(len(tracked_names))
+            field_filter_flags = np.ones(len(field_names))
+            field_colormap_flags = np.ones(len(field_names))
 
             ## create a firefly ParticleGroup for this particle type
             pg = firefly.data_reader.ParticleGroup(
@@ -858,10 +870,13 @@ class YTDataContainer(abc.ABC):
                 coordinates=self[ptype, "relative_particle_position"].in_units(
                     coordinate_units
                 ),
-                tracked_arrays=tracked_arrays,
-                tracked_names=tracked_names,
-                tracked_filter_flags=tracked_filter_flags,
-                tracked_colormap_flags=tracked_colormap_flags,
+                velocities=self[ptype, "relative_particle_velocity"].in_units(
+                    velocity_units
+                ),
+                field_arrays=field_arrays,
+                field_names=field_names,
+                field_filter_flags=field_filter_flags,
+                field_colormap_flags=field_colormap_flags,
                 decimation_factor=default_decimation_factor,
             )
 
@@ -1014,7 +1029,8 @@ class YTDataContainer(abc.ABC):
         r"""Compute the minimum of a field.
 
         This will, in a parallel-aware fashion, compute the minimum of the
-        given field.  Supplying an axis is not currently supported.  If the max
+        given field. Supplying an axis will result in a return value of a
+        YTProjection, with method 'min' for minimum intensity.  If the min
         has already been requested, it will use the cached extrema value.
 
         Parameters
@@ -1026,12 +1042,13 @@ class YTDataContainer(abc.ABC):
 
         Returns
         -------
-        Scalar.
+        Either a scalar or a YTProjection.
 
         Examples
         --------
 
         >>> min_temp = reg.min(("gas", "temperature"))
+        >>> min_temp_proj = reg.min(("gas", "temperature"), axis=("index", "x"))
         """
         if axis is None:
             rv = tuple(self._compute_extrema(f)[0] for f in iter_fields(field))
@@ -1043,26 +1060,42 @@ class YTDataContainer(abc.ABC):
         else:
             raise NotImplementedError(f"Unknown axis {axis}")
 
-    def std(self, field, weight=None):
-        """Compute the standard deviation of a field.
+    def std(self, field, axis=None, weight=None):
+        """Compute the standard deviation of a field, optionally along
+        an axis, with a weight.
 
         This will, in a parallel-ware fashion, compute the standard
-        deviation of the given field.
+        deviation of the given field. If an axis is supplied, it
+        will return a projection, where the weight is also supplied.
+
+        By default the weight field will be "ones" or "particle_ones",
+        depending on the field, resulting in an unweighted standard
+        deviation.
 
         Parameters
         ----------
         field : string or tuple field name
             The field to calculate the standard deviation of
-        weight : string or tuple field name
-            The field to weight the standard deviation calculation
-            by. Defaults to unweighted if unset.
+        axis : string, optional
+            If supplied, the axis to compute the standard deviation
+            along (i.e., to project along)
+        weight : string, optional
+            The field to use as a weight.
 
         Returns
         -------
-        Scalar
+        Scalar or YTProjection.
         """
         weight_field = sanitize_weight_field(self.ds, field, weight)
-        return self.quantities.weighted_standard_deviation(field, weight_field)[0]
+        if axis in self.ds.coordinates.axis_name:
+            r = self.ds.proj(
+                field, axis, data_source=self, weight_field=weight_field, moment=2
+            )
+        elif axis is None:
+            r = self.quantities.weighted_standard_deviation(field, weight_field)[0]
+        else:
+            raise NotImplementedError(f"Unknown axis {axis}")
+        return r
 
     def ptp(self, field):
         r"""Compute the range of values (maximum - minimum) of a field.
@@ -1257,7 +1290,7 @@ class YTDataContainer(abc.ABC):
             raise NotImplementedError(f"Unknown axis {axis}")
         return r
 
-    def integrate(self, field, weight=None, axis=None):
+    def integrate(self, field, weight=None, axis=None, *, moment=1):
         r"""Compute the integral (projection) of a field along an axis.
 
         This projects a field along an axis.
@@ -1270,6 +1303,10 @@ class YTDataContainer(abc.ABC):
             The field to weight the projection by
         axis : string
             The axis to project along.
+        moment : integer, optional
+            for a weighted projection, moment = 1 (the default) corresponds to a
+            weighted average. moment = 2 corresponds to a weighted standard
+            deviation.
 
         Returns
         -------
@@ -1285,7 +1322,9 @@ class YTDataContainer(abc.ABC):
         else:
             weight_field = None
         if axis in self.ds.coordinates.axis_name:
-            r = self.ds.proj(field, axis, data_source=self, weight_field=weight_field)
+            r = self.ds.proj(
+                field, axis, data_source=self, weight_field=weight_field, moment=moment
+            )
         else:
             raise NotImplementedError(f"Unknown axis {axis}")
         return r
@@ -1406,7 +1445,7 @@ class YTDataContainer(abc.ABC):
                     ptypes = self.ds._sph_ptypes
                     if finfo.name[0] in ptypes:
                         ftype = finfo.name[0]
-                    elif finfo.alias_field and finfo.alias_name[0] in ptypes:
+                    elif finfo.is_alias and finfo.alias_name[0] in ptypes:
                         ftype = self._current_fluid_type
             else:
                 ftype = self._current_fluid_type
@@ -1431,7 +1470,6 @@ class YTDataContainer(abc.ABC):
                 continue
 
             ftype, fname = self._tupleize_field(field)
-            # print(field, " : ",ftype, fname)
             finfo = self.ds._get_field_info(ftype, fname)
 
             # really ugly check to ensure that this field really does exist somewhere,

@@ -158,13 +158,10 @@ class NotCartopy(NotAModule):
             )
         else:
             self.error = ImportError(
-                "This functionality requires the %s "
-                "package to be installed. Try installing proj4 and "
-                "geos with your package manager and building shapely "
-                "and cartopy from source with: \n \n "
-                "python -m pip install --no-binary :all: shapely cartopy \n \n"
-                "For further instruction please refer to the "
-                "yt documentation." % self.pkg_name
+                f"This functionality requires the {pkg_name} "
+                "package to be installed.\n"
+                "For further instruction please refer to Cartopy's documentation\n"
+                "https://scitools.org.uk/cartopy/docs/latest/installing.html"
             )
 
 
@@ -205,6 +202,34 @@ class pooch_imports(OnDemand):
 _pooch = pooch_imports()
 
 
+class pyart_imports(OnDemand):
+    @safe_import
+    def io(self):
+        from pyart import io
+
+        return io
+
+    @safe_import
+    def map(self):
+        from pyart import map
+
+        return map
+
+
+_pyart = pyart_imports()
+
+
+class xarray_imports(OnDemand):
+    @safe_import
+    def open_dataset(self):
+        from xarray import open_dataset
+
+        return open_dataset
+
+
+_xarray = xarray_imports()
+
+
 class scipy_imports(OnDemand):
     @safe_import
     def signal(self):
@@ -223,6 +248,15 @@ class scipy_imports(OnDemand):
         from scipy import ndimage
 
         return ndimage
+
+    # Optimize is not presently used by yt, but appears here to enable
+    # required functionality in yt extension, trident
+
+    @safe_import
+    def optimize(self):
+        from scipy import optimize
+
+        return optimize
 
 
 _scipy = scipy_imports()
@@ -418,21 +452,21 @@ class pandas_imports(OnDemand):
 _pandas = pandas_imports()
 
 
-class Firefly_imports(OnDemand):
+class firefly_imports(OnDemand):
     @safe_import
     def data_reader(self):
-        import Firefly.data_reader as data_reader
+        import firefly.data_reader as data_reader
 
         return data_reader
 
     @safe_import
     def server(self):
-        import Firefly.server as server
+        import firefly.server as server
 
         return server
 
 
-_firefly = Firefly_imports()
+_firefly = firefly_imports()
 
 
 # Note: ratarmount may fail with an OSError on import if libfuse is missing

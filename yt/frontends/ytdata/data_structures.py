@@ -1,19 +1,20 @@
 import os
 import weakref
 from collections import defaultdict
+from functools import cached_property
 from numbers import Number as numeric_type
 from typing import Tuple, Type
 
 import numpy as np
 
 from yt.data_objects.index_subobjects.grid_patch import AMRGridPatch
-from yt.data_objects.particle_unions import ParticleUnion
 from yt.data_objects.profiles import (
     Profile1DFromDataset,
     Profile2DFromDataset,
     Profile3DFromDataset,
 )
 from yt.data_objects.static_output import Dataset, ParticleFile, validate_index_order
+from yt.data_objects.unions import ParticleUnion
 from yt.fields.field_exceptions import NeedsGridType
 from yt.fields.field_info_container import FieldInfoContainer
 from yt.funcs import is_root, parse_h5_attr
@@ -21,8 +22,9 @@ from yt.geometry.geometry_handler import Index
 from yt.geometry.grid_geometry_handler import GridIndex
 from yt.geometry.particle_geometry_handler import ParticleIndex
 from yt.units import dimensions
+from yt.units._numpy_wrapper_functions import uconcatenate
 from yt.units.unit_registry import UnitRegistry  # type: ignore
-from yt.units.yt_array import YTQuantity, uconcatenate  # type: ignore
+from yt.units.yt_array import YTQuantity
 from yt.utilities.exceptions import GenerationInProgress, YTFieldTypeNotFound
 from yt.utilities.logger import ytLogger as mylog
 from yt.utilities.on_demand_imports import _h5py as h5py
@@ -274,31 +276,25 @@ class YTDataContainerDataset(YTDataset):
         # cover the field_list.
         self.field_info.alias(("gas", "cell_volume"), ("grid", "cell_volume"))
 
-    _data_obj = None
-
-    @property
+    @cached_property
     def data(self):
         """
         Return a data container configured like the original used to
         create this dataset.
         """
 
-        if self._data_obj is None:
-            # Some data containers can't be reconstructed in the same way
-            # since this is now particle-like data.
-            data_type = self.parameters.get("data_type")
-            container_type = self.parameters.get("container_type")
-            ex_container_type = ["cutting", "quad_proj", "ray", "slice", "cut_region"]
-            if data_type == "yt_light_ray" or container_type in ex_container_type:
-                mylog.info("Returning an all_data data container.")
-                return self.all_data()
+        # Some data containers can't be reconstructed in the same way
+        # since this is now particle-like data.
+        data_type = self.parameters.get("data_type")
+        container_type = self.parameters.get("container_type")
+        ex_container_type = ["cutting", "quad_proj", "ray", "slice", "cut_region"]
+        if data_type == "yt_light_ray" or container_type in ex_container_type:
+            mylog.info("Returning an all_data data container.")
+            return self.all_data()
 
-            my_obj = getattr(self, self.parameters["container_type"])
-            my_args = [
-                self.parameters[con_arg] for con_arg in self.parameters["con_args"]
-            ]
-            self._data_obj = my_obj(*my_args)
-        return self._data_obj
+        my_obj = getattr(self, self.parameters["container_type"])
+        my_args = [self.parameters[con_arg] for con_arg in self.parameters["con_args"]]
+        return my_obj(*my_args)
 
     @classmethod
     def _is_valid(cls, filename, *args, **kwargs):
@@ -952,16 +948,9 @@ class YTClumpTreeDataset(YTNonspatialDataset):
                 parent = my_tree[clump.parent_id]
                 parent.add_child(clump)
 
-    _leaves = None
-
-    @property
+    @cached_property
     def leaves(self):
-        if self._leaves is None:
-            self._leaves = []
-            for clump in self.tree:
-                if clump.children is None:
-                    self._leaves.append(clump)
-        return self._leaves
+        return [clump for clump in self.tree if clump.children is None]
 
     @classmethod
     def _is_valid(cls, filename, *args, **kwargs):
