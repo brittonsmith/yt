@@ -85,7 +85,6 @@ class EnzoGridInMemory(EnzoGrid):
 
 
 class EnzoGridGZ(EnzoGrid):
-
     __slots__ = ()
 
     def retrieve_ghost_zones(self, n_zones, fields, all_levels=False, smoothed=False):
@@ -141,13 +140,11 @@ class EnzoGridGZ(EnzoGrid):
 
 
 class EnzoHierarchy(GridIndex):
-
     _strip_path = False
     grid = EnzoGrid
     _preload_implemented = True
 
     def __init__(self, ds, dataset_type):
-
         self.dataset_type = dataset_type
         self.index_filename = os.path.abspath(f"{ds.parameter_filename}.hierarchy")
         if os.path.getsize(self.index_filename) == 0:
@@ -345,7 +342,7 @@ class EnzoHierarchy(GridIndex):
         mylog.info("Finished rebuilding")
 
     def _populate_grid_objects(self):
-        for g, f in zip(self.grids, self.filenames):
+        for g, f in zip(self.grids, self.filenames, strict=True):
             g._prepare_grid()
             g._setup_dx()
             g.set_filename(f[0])
@@ -444,14 +441,15 @@ class EnzoHierarchy(GridIndex):
 
     def _generate_random_grids(self):
         if self.num_grids > 40:
-            starter = np.random.randint(0, 20)
+            rng = np.random.default_rng()
+            starter = rng.integers(0, 20)
             random_sample = np.mgrid[starter : len(self.grids) - 1 : 20j].astype(
                 "int32"
             )
             # We also add in a bit to make sure that some of the grids have
             # particles
             gwp = self.grid_particle_count > 0
-            if np.any(gwp) and not np.any(gwp[(random_sample,)]):
+            if np.any(gwp) and not np.any(gwp[random_sample,]):
                 # We just add one grid.  This is not terribly efficient.
                 first_grid = np.where(gwp)[0][0]
                 random_sample.resize((21,))
@@ -460,7 +458,7 @@ class EnzoHierarchy(GridIndex):
             mylog.debug("Checking grids: %s", random_sample.tolist())
         else:
             random_sample = np.mgrid[0 : max(len(self.grids), 1)].astype("int32")
-        return self.grids[(random_sample,)]
+        return self.grids[random_sample,]
 
     def _get_particle_type_counts(self):
         try:
@@ -534,7 +532,6 @@ class EnzoHierarchy(GridIndex):
 
 
 class EnzoHierarchyInMemory(EnzoHierarchy):
-
     grid = EnzoGridInMemory
 
     @cached_property
@@ -612,12 +609,13 @@ class EnzoHierarchyInMemory(EnzoHierarchy):
         my_rank = self.comm.rank
         my_grids = self.grids[self.grid_procs.ravel() == my_rank]
         if len(my_grids) > 40:
-            starter = np.random.randint(0, 20)
+            rng = np.random.default_rng()
+            starter = rng.integers(0, 20)
             random_sample = np.mgrid[starter : len(my_grids) - 1 : 20j].astype("int32")
             mylog.debug("Checking grids: %s", random_sample.tolist())
         else:
             random_sample = np.mgrid[0 : max(len(my_grids) - 1, 1)].astype("int32")
-        return my_grids[(random_sample,)]
+        return my_grids[random_sample,]
 
     def _chunk_io(self, dobj, cache=True, local_only=False):
         gfiles = defaultdict(list)
@@ -668,6 +666,7 @@ class EnzoDataset(Dataset):
     Enzo-specific output, set at a fixed time.
     """
 
+    _load_requirements = ["h5py"]
     _index_class = EnzoHierarchy
     _field_info_class = EnzoFieldInfo
 
@@ -984,10 +983,10 @@ class EnzoDataset(Dataset):
         setdefaultattr(self, "magnetic_unit", self.quan(magnetic_unit, "gauss"))
 
     @classmethod
-    def _is_valid(cls, filename, *args, **kwargs):
-        if str(filename).endswith(".hierarchy"):
-            return True
-        return os.path.exists(f"{filename}.hierarchy")
+    def _is_valid(cls, filename: str, *args, **kwargs) -> bool:
+        return filename.endswith(".hierarchy") or os.path.exists(
+            f"{filename}.hierarchy"
+        )
 
     @classmethod
     def _guess_candidates(cls, base, directories, files):
@@ -1018,7 +1017,8 @@ class EnzoDatasetInMemory(EnzoDataset):
 
     def _parse_parameter_file(self):
         enzo = self._obtain_enzo()
-        self.basename = "cycle%08i" % (enzo.yt_parameter_file["NumberOfPythonCalls"])
+        ncalls = enzo.yt_parameter_file["NumberOfPythonCalls"]
+        self._input_filename = f"cycle{ncalls:08d}"
         self.parameters["CurrentTimeIdentifier"] = time.time()
         self.parameters.update(enzo.yt_parameter_file)
         self.conversion_factors.update(enzo.conversion_factors)
@@ -1063,7 +1063,7 @@ class EnzoDatasetInMemory(EnzoDataset):
         return enzo
 
     @classmethod
-    def _is_valid(cls, filename, *args, **kwargs):
+    def _is_valid(cls, filename: str, *args, **kwargs) -> bool:
         return False
 
 

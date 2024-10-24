@@ -3,7 +3,11 @@ from functools import cached_property
 
 from yt.funcs import obj_length
 from yt.units.yt_array import YTQuantity
-from yt.utilities.exceptions import YTDimensionalityError, YTFieldNotParseable
+from yt.utilities.exceptions import (
+    YTDimensionalityError,
+    YTFieldNotFound,
+    YTFieldNotParseable,
+)
 from yt.visualization.line_plot import LineBuffer
 
 from .data_containers import _get_ipython_key_completion
@@ -23,7 +27,11 @@ class RegionExpression:
         # that result in a rectangular prism or a slice.
         try:
             return self.all_data[item]
-        except (TypeError, YTFieldNotParseable):
+        except (YTFieldNotParseable, YTFieldNotFound):
+            # any error raised by self.ds._get_field_info
+            # signals a type error (not a field), however we don't want to
+            # catch plain TypeErrors as this may create subtle bugs very hard
+            # to decipher, like broken internal function calls.
             pass
 
         if isinstance(item, slice):
@@ -158,7 +166,7 @@ class RegionExpression:
             if d is not None:
                 d = int(d)
             dims[ax] = d
-        center = [(cl + cr) / 2.0 for cl, cr in zip(left_edge, right_edge)]
+        center = (left_edge + right_edge) / 2.0
         if None not in dims:
             return self.ds.arbitrary_grid(left_edge, right_edge, dims)
         return self.ds.region(center, left_edge, right_edge)

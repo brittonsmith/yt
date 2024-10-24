@@ -6,11 +6,11 @@ from collections import UserDict
 from functools import cached_property
 from itertools import chain, product, repeat
 from numbers import Number as numeric_type
-from typing import Type
 
 import numpy as np
 from more_itertools import always_iterable
 
+from yt._typing import AxisOrder, FieldKey
 from yt.data_objects.field_data import YTFieldData
 from yt.data_objects.index_subobjects.grid_patch import AMRGridPatch
 from yt.data_objects.index_subobjects.octree_subset import OctreeSubset
@@ -23,6 +23,7 @@ from yt.data_objects.static_output import Dataset, ParticleFile
 from yt.data_objects.unions import MeshUnion, ParticleUnion
 from yt.frontends.sph.data_structures import SPHParticleIndex
 from yt.funcs import setdefaultattr
+from yt.geometry.api import Geometry
 from yt.geometry.geometry_handler import Index, YTDataChunk
 from yt.geometry.grid_geometry_handler import GridIndex
 from yt.geometry.oct_container import OctreeContainer
@@ -146,7 +147,6 @@ class StreamHandler:
         return self.fields.all_fields
 
     def get_particle_type(self, field):
-
         if field in self.particle_types:
             return self.particle_types[field]
         else:
@@ -154,7 +154,6 @@ class StreamHandler:
 
 
 class StreamHierarchy(GridIndex):
-
     grid = StreamGrid
 
     def __init__(self, ds, dataset_type=None):
@@ -240,7 +239,7 @@ class StreamHierarchy(GridIndex):
             get_box_grids_level(
                 self.grid_left_edge[i, :],
                 self.grid_right_edge[i, :],
-                self.grid_levels[i] + 1,
+                self.grid_levels[i].item() + 1,
                 self.grid_left_edge,
                 self.grid_right_edge,
                 self.grid_levels,
@@ -321,7 +320,7 @@ class StreamHierarchy(GridIndex):
 
 
 class StreamDataset(Dataset):
-    _index_class: Type[Index] = StreamHierarchy
+    _index_class: type[Index] = StreamHierarchy
     _field_info_class = StreamFieldInfo
     _dataset_type = "stream"
 
@@ -332,16 +331,18 @@ class StreamDataset(Dataset):
         geometry="cartesian",
         unit_system="cgs",
         default_species_fields=None,
+        *,
+        axis_order: AxisOrder | None = None,
     ):
         self.fluid_types += ("stream",)
-        self.geometry = geometry
+        self.geometry = Geometry(geometry)
         self.stream_handler = stream_handler
         self._find_particle_types()
         name = f"InMemoryParameterFile_{uuid.uuid4().hex}"
         from yt.data_objects.static_output import _cached_datasets
 
         if geometry == "spectral_cube":
-            # mimick FITSDataset specific interface to allow testing with
+            # mimic FITSDataset specific interface to allow testing with
             # fake, in memory data
             setdefaultattr(self, "lon_axis", 0)
             setdefaultattr(self, "lat_axis", 1)
@@ -353,7 +354,7 @@ class StreamDataset(Dataset):
             setdefaultattr(
                 self,
                 "pixel2spec",
-                lambda pixel_value: self.arr(pixel_value, self.spec_unit),
+                lambda pixel_value: self.arr(pixel_value, self.spec_unit),  # type: ignore [attr-defined]
             )
             setdefaultattr(
                 self,
@@ -368,6 +369,7 @@ class StreamDataset(Dataset):
             self._dataset_type,
             unit_system=unit_system,
             default_species_fields=default_species_fields,
+            axis_order=axis_order,
         )
 
     @property
@@ -419,7 +421,7 @@ class StreamDataset(Dataset):
             "magnetic_unit",
         )
         cgs_units = ("cm", "g", "s", "cm/s", "gauss")
-        for unit, attr, cgs_unit in zip(base_units, attrs, cgs_units):
+        for unit, attr, cgs_unit in zip(base_units, attrs, cgs_units, strict=True):
             if isinstance(unit, str):
                 if unit == "code_magnetic":
                     # If no magnetic unit was explicitly specified
@@ -442,7 +444,7 @@ class StreamDataset(Dataset):
             )
 
     @classmethod
-    def _is_valid(cls, filename, *args, **kwargs):
+    def _is_valid(cls, filename: str, *args, **kwargs) -> bool:
         return False
 
     @property
@@ -459,7 +461,7 @@ class StreamDataset(Dataset):
 
 
 class StreamDictFieldHandler(UserDict):
-    _additional_fields = ()
+    _additional_fields: tuple[FieldKey, ...] = ()
 
     @property
     def all_fields(self):
@@ -545,6 +547,8 @@ class StreamParticlesDataset(StreamDataset):
         geometry="cartesian",
         unit_system="cgs",
         default_species_fields=None,
+        *,
+        axis_order: AxisOrder | None = None,
     ):
         super().__init__(
             stream_handler,
@@ -552,12 +556,17 @@ class StreamParticlesDataset(StreamDataset):
             geometry=geometry,
             unit_system=unit_system,
             default_species_fields=default_species_fields,
+            axis_order=axis_order,
         )
         fields = list(stream_handler.fields["stream_file"].keys())
-        # This is the current method of detecting SPH data.
-        # This should be made more flexible in the future.
-        if ("io", "density") in fields and ("io", "smoothing_length") in fields:
-            self._sph_ptypes = ("io",)
+        sph_ptypes = []
+        for ptype in self.particle_types:
+            if (ptype, "density") in fields and (ptype, "smoothing_length") in fields:
+                sph_ptypes.append(ptype)
+        if len(sph_ptypes) == 1:
+            self._sph_ptypes = tuple(sph_ptypes)
+        elif len(sph_ptypes) > 1:
+            raise ValueError("Multiple SPH particle types are currently not supported!")
 
     def add_sph_fields(self, n_neighbors=32, kernel="cubic", sph_ptype="io"):
         """Add SPH fields for the specified particle type.
@@ -618,7 +627,7 @@ class StreamParticlesDataset(StreamDataset):
         if not exists(fname):
             hsml = generate_smoothing_length(pos[kdtree.idx], kdtree, n_neighbors)
             hsml = hsml[order]
-            data[(sph_ptype, "smoothing_length")] = (hsml, l_unit)
+            data[sph_ptype, "smoothing_length"] = (hsml, l_unit)
         else:
             hsml = ad[sph_ptype, fname].to(l_unit).d
 
@@ -633,7 +642,7 @@ class StreamParticlesDataset(StreamDataset):
                 kernel_name=kernel,
             )
             dens = dens[order]
-            data[(sph_ptype, "density")] = (dens, d_unit)
+            data[sph_ptype, "density"] = (dens, d_unit)
 
         # Add fields
         self._sph_ptypes = (sph_ptype,)
@@ -756,7 +765,7 @@ class StreamOctreeSubset(OctreeSubset):
         self.field_data = YTFieldData()
         self.field_parameters = {}
         self.ds = ds
-        self.oct_handler = oct_handler
+        self._oct_handler = oct_handler
         self._last_mask = None
         self._last_selector_id = None
         self._current_particle_type = "io"
@@ -773,6 +782,10 @@ class StreamOctreeSubset(OctreeSubset):
                 )
             base_grid = StreamOctreeSubset(base_region, ds, oct_handler, num_zones)
             self._base_grid = base_grid
+
+    @property
+    def oct_handler(self):
+        return self._oct_handler
 
     def retrieve_ghost_zones(self, ngz, fields, smoothed=False):
         try:
@@ -851,15 +864,17 @@ class StreamOctreeHandler(OctreeIndex):
             self.io = io_registry[self.dataset_type](self.ds)
 
     def _initialize_oct_handler(self):
-        header = dict(
-            dims=[1, 1, 1],
-            left_edge=self.ds.domain_left_edge,
-            right_edge=self.ds.domain_right_edge,
-            octree=self.ds.octree_mask,
-            num_zones=self.ds.num_zones,
-            partial_coverage=self.ds.partial_coverage,
-        )
+        header = {
+            "dims": self.ds.domain_dimensions // self.ds.num_zones,
+            "left_edge": self.ds.domain_left_edge,
+            "right_edge": self.ds.domain_right_edge,
+            "octree": self.ds.octree_mask,
+            "num_zones": self.ds.num_zones,
+            "partial_coverage": self.ds.partial_coverage,
+        }
         self.oct_handler = OctreeContainer.load_octree(header)
+        # We do now need to get the maximum level set, as well.
+        self.ds.max_level = self.oct_handler.max_level
 
     def _identify_base_chunk(self, dobj):
         if getattr(dobj, "_chunk_info", None) is None:

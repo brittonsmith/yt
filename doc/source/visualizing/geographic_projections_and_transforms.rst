@@ -11,7 +11,7 @@ With support from `cartopy <https://scitools.org.uk/cartopy/docs/latest/>`_,
 ``yt`` now supports these projection
 types for geographically loaded data.
 Underlying data is assumed to have a transform of `PlateCarree
-<https://scitools.org.uk/cartopy/docs/latest/crs/projections.html#platecarree>`__,
+<https://scitools.org.uk/cartopy/docs/latest/reference/projections.html#platecarree>`__,
 which is data on a flattened, rectangular, latitude/longitude grid. This is a
 a typical format for geographic data.
 
@@ -34,7 +34,7 @@ Installing Cartopy
 
 In order to access the geographic projection functionality, you will need to have an
 installation of ``cartopy`` available on your machine. Please refer to `Cartopy's
-documentation for detailled instructions <https://scitools.org.uk/cartopy/docs/latest/installing.html>`_
+documentation for detailed instructions <https://scitools.org.uk/cartopy/docs/latest/installing.html>`_
 
 Using Basic Transforms
 ^^^^^^^^^^^^^^^^^^^^^^^
@@ -78,7 +78,7 @@ with this functionality.
 
 The next few examples will use a GEOS dataset accessible from the ``yt`` data
 downloads page. For details about loading this data, please
-see :ref:`cookbook-geographic_projections`.
+see :doc:`../cookbook/geographic_xforms_and_projections`.
 
 If a geographic dataset is loaded without any defined projection the default
 option of ``Mollweide`` will be displayed.
@@ -141,4 +141,4 @@ levels of customization:
     set_mpl_projection(cartopy.crs.PlateCarree())
 
 Further examples of using the geographic transforms with this dataset
-can be found in :ref:`cookbook-geographic_projections`.
+can be found in :doc:`../cookbook/geographic_xforms_and_projections`.

@@ -7,6 +7,7 @@ import numpy as np
 from yt.data_objects.index_subobjects.grid_patch import AMRGridPatch
 from yt.data_objects.static_output import Dataset
 from yt.funcs import just_one, setdefaultattr
+from yt.geometry.api import Geometry
 from yt.geometry.grid_geometry_handler import GridIndex
 from yt.units.dimensions import dimensionless as sympy_one  # type: ignore
 from yt.units.unit_object import Unit  # type: ignore
@@ -52,7 +53,6 @@ class GDFGrid(AMRGridPatch):
 
 
 class GDFHierarchy(GridIndex):
-
     grid = GDFGrid
 
     def __init__(self, ds, dataset_type="grid_data_format"):
@@ -115,7 +115,7 @@ class GDFHierarchy(GridIndex):
             get_box_grids_level(
                 self.grid_left_edge[gi, :],
                 self.grid_right_edge[gi, :],
-                self.grid_levels[gi],
+                self.grid_levels[gi].item(),
                 self.grid_left_edge,
                 self.grid_right_edge,
                 self.grid_levels,
@@ -148,6 +148,7 @@ class GDFHierarchy(GridIndex):
 
 
 class GDFDataset(Dataset):
+    _load_requirements = ["h5py"]
     _index_class = GDFHierarchy
     _field_info_class = GDFFieldInfo
 
@@ -246,7 +247,7 @@ class GDFDataset(Dataset):
         if self.geometry is None:
             geometry = just_one(sp.get("geometry", 0))
             try:
-                self.geometry = GEOMETRY_TRANS[geometry]
+                self.geometry = Geometry(GEOMETRY_TRANS[geometry])
             except KeyError as e:
                 raise YTGDFUnknownGeometry(geometry) from e
         self.parameters.update(sp)
@@ -277,14 +278,18 @@ class GDFDataset(Dataset):
             self.omega_matter = 0.0
             self.hubble_constant = 0.0
             self.cosmological_simulation = 0
-        self.parameters["Time"] = 1.0  # Hardcode time conversion for now.
+        # Hardcode time conversion for now.
+        self.parameters["Time"] = 1.0
         # Hardcode for now until field staggering is supported.
         self.parameters["HydroMethod"] = 0
         self._handle.close()
         del self._handle
 
     @classmethod
-    def _is_valid(cls, filename, *args, **kwargs):
+    def _is_valid(cls, filename: str, *args, **kwargs) -> bool:
+        if cls._missing_load_requirements():
+            return False
+
         try:
             fileh = h5py.File(filename, mode="r")
             if "gridded_data_format" in fileh:

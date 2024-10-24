@@ -2,34 +2,55 @@ import sys
 import warnings
 from abc import ABC
 from io import BytesIO
-from typing import Optional, Tuple, Union
+from typing import TYPE_CHECKING, Optional, TypedDict
 
 import matplotlib
 import numpy as np
-from matplotlib.axis import Axis
-from matplotlib.colors import LogNorm, Normalize, SymLogNorm
-from matplotlib.figure import Figure
+from matplotlib.scale import SymmetricalLogTransform
 from matplotlib.ticker import LogFormatterMathtext
-from packaging.version import Version
 
-from yt.funcs import get_interactivity, is_sequence, matplotlib_style_context, mylog
+from yt._typing import AlphaT
+from yt.funcs import (
+    get_interactivity,
+    is_sequence,
+    matplotlib_style_context,
+    mylog,
+    setdefault_mpl_metadata,
+    setdefaultattr,
+)
 from yt.visualization._handlers import ColorbarHandler, NormHandler
 
 from ._commons import (
-    MPL_VERSION,
     get_canvas,
-    get_symlog_majorticks,
-    get_symlog_minorticks,
     validate_image_name,
 )
+
+if matplotlib.__version_info__ >= (3, 8):
+    from matplotlib.ticker import SymmetricalLogLocator
+else:
+    from ._commons import _MPL38_SymmetricalLogLocator as SymmetricalLogLocator
+
+if TYPE_CHECKING:
+    from typing import Literal
+
+    from matplotlib.axes import Axes
+    from matplotlib.axis import Axis
+    from matplotlib.figure import Figure
+    from matplotlib.transforms import Transform
+
+    class FormatKwargs(TypedDict):
+        style: Literal["scientific"]
+        scilimits: tuple[int, int]
+        useMathText: bool
+
 
 BACKEND_SPECS = {
     "GTK": ["backend_gtk", "FigureCanvasGTK", "FigureManagerGTK"],
     "GTKAgg": ["backend_gtkagg", "FigureCanvasGTKAgg", None],
     "GTKCairo": ["backend_gtkcairo", "FigureCanvasGTKCairo", None],
     "MacOSX": ["backend_macosx", "FigureCanvasMac", "FigureManagerMac"],
-    "Qt4Agg": ["backend_qt4agg", "FigureCanvasQTAgg", None],
     "Qt5Agg": ["backend_qt5agg", "FigureCanvasQTAgg", None],
+    "QtAgg": ["backend_qtagg", "FigureCanvasQTAgg", None],
     "TkAgg": ["backend_tkagg", "FigureCanvasTkAgg", None],
     "WX": ["backend_wx", "FigureCanvasWx", None],
     "WXAgg": ["backend_wxagg", "FigureCanvasWxAgg", None],
@@ -56,7 +77,7 @@ class CallbackWrapper:
             if viewer._has_swapped_axes:
                 # store the original un-transposed shape
                 self.raw_image_shape = self.raw_image_shape[1], self.raw_image_shape[0]
-        if frb.axis < 3:
+        if frb.axis is not None:
             DD = frb.ds.domain_width
             xax = frb.ds.coordinates.x_axis[frb.axis]
             yax = frb.ds.coordinates.y_axis[frb.axis]
@@ -80,6 +101,7 @@ class CallbackWrapper:
         self.font_properties = font_properties
         self.font_color = font_color
         self.field = field
+        self._transform = viewer._transform
 
 
 class PlotMPL:
@@ -88,11 +110,11 @@ class PlotMPL:
     def __init__(
         self,
         fsize,
-        axrect,
+        axrect: tuple[float, float, float, float],
         *,
         norm_handler: NormHandler,
-        figure: Optional[Figure] = None,
-        axes: Optional[Axis] = None,
+        figure: Optional["Figure"] = None,
+        axes: Optional["Axes"] = None,
     ):
         """Initialize PlotMPL class"""
         import matplotlib.figure
@@ -108,7 +130,7 @@ class PlotMPL:
         if axes is None:
             self._create_axes(axrect)
         else:
-            axes.cla()
+            axes.clear()
             axes.set_position(axrect)
             self.axes = axes
         self.interactivity = get_interactivity()
@@ -124,20 +146,16 @@ class PlotMPL:
 
         self.norm_handler = norm_handler
 
-    def _create_axes(self, axrect):
+    def _create_axes(self, axrect: tuple[float, float, float, float]) -> None:
         self.axes = self.figure.add_axes(axrect)
 
     def _get_canvas_classes(self):
-
         if self.interactivity:
             key = str(matplotlib.get_backend())
         else:
             key = "agg"
 
-        try:
-            module, fig_canvas, fig_manager = BACKEND_SPECS[key]
-        except KeyError:
-            return
+        module, fig_canvas, fig_manager = BACKEND_SPECS[key]
 
         mod = __import__(
             "matplotlib.backends",
@@ -159,10 +177,9 @@ class PlotMPL:
 
         if mpl_kwargs is None:
             mpl_kwargs = {}
-        if "papertype" not in mpl_kwargs and MPL_VERSION < Version("3.3.0"):
-            mpl_kwargs["papertype"] = "auto"
 
         name = validate_image_name(name)
+        setdefault_mpl_metadata(mpl_kwargs, name)
 
         try:
             canvas = get_canvas(self.figure, name)
@@ -198,10 +215,10 @@ class PlotMPL:
         for label in self._get_labels():
             label.set_fontproperties(font_properties)
             if font_color is not None:
-                label.set_color(self.font_color)
+                label.set_color(font_color)
 
     def _repr_png_(self):
-        from ._mpl_imports import FigureCanvasAgg
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
 
         canvas = FigureCanvasAgg(self.figure)
         f = BytesIO()
@@ -224,11 +241,15 @@ class ImagePlotMPL(PlotMPL, ABC):
         *,
         norm_handler: NormHandler,
         colorbar_handler: ColorbarHandler,
-        figure: Optional[Figure] = None,
-        axes: Optional[Axis] = None,
-        cax: Optional[Axis] = None,
+        figure: Optional["Figure"] = None,
+        axes: Optional["Axes"] = None,
+        cax: Optional["Axes"] = None,
     ):
         """Initialize ImagePlotMPL class object"""
+
+        self._transform: Transform | None
+        setdefaultattr(self, "_transform", None)
+
         self.colorbar_handler = colorbar_handler
         _missing_layout_specs = [_ is None for _ in (fsize, axrect, caxrect)]
 
@@ -246,12 +267,12 @@ class ImagePlotMPL(PlotMPL, ABC):
         if cax is None:
             self.cax = self.figure.add_axes(caxrect)
         else:
-            cax.cla()
+            cax.clear()
             cax.set_position(caxrect)
             self.cax = cax
 
     def _setup_layout_constraints(
-        self, figure_size: Union[Tuple[float, float], float], fontsize: float
+        self, figure_size: tuple[float, float] | float, fontsize: float
     ):
         # Setup base layout attributes
         # derived classes need to call this before super().__init__
@@ -281,7 +302,7 @@ class ImagePlotMPL(PlotMPL, ABC):
         self.cax.set_position(caxrect)
         self.figure.set_size_inches(*size)
 
-    def _init_image(self, data, extent, aspect):
+    def _init_image(self, data, extent, aspect, *, alpha: AlphaT = None):
         """Store output of imshow in image variable"""
 
         norm = self.norm_handler.get_norm(data)
@@ -306,67 +327,67 @@ class ImagePlotMPL(PlotMPL, ABC):
             cmap=self.colorbar_handler.cmap,
             interpolation="nearest",
             transform=transform,
+            alpha=alpha,
         )
-        self._set_axes(norm)
+        self._set_axes()
 
-    def _set_axes(self, norm: Normalize) -> None:
-        if isinstance(norm, SymLogNorm):
-            formatter = LogFormatterMathtext(linthresh=norm.linthresh)
-            self.cb = self.figure.colorbar(self.image, self.cax, format=formatter)
-            self.cb.set_ticks(
-                get_symlog_majorticks(
-                    linthresh=norm.linthresh, vmin=norm.vmin, vmax=norm.vmax
-                )
-            )
-        else:
-            self.cb = self.figure.colorbar(self.image, self.cax)
-        self.cax.tick_params(which="both", axis="y", direction="in")
-
-        fmt_kwargs = dict(style="scientific", scilimits=(-2, 3), useMathText=True)
+    def _set_axes(self) -> None:
+        fmt_kwargs: FormatKwargs = {
+            "style": "scientific",
+            "scilimits": (-2, 3),
+            "useMathText": True,
+        }
         self.image.axes.ticklabel_format(**fmt_kwargs)
-        if type(norm) not in (LogNorm, SymLogNorm):
-            try:
-                self.cb.ax.ticklabel_format(**fmt_kwargs)
-            except AttributeError as exc:
-                if MPL_VERSION < Version("3.5.0"):
-                    warnings.warn(
-                        "Failed to format colorbar ticks. "
-                        "This is expected when using the set_norm method "
-                        "with some matplotlib classes (e.g. TwoSlopeNorm) "
-                        "with matplotlib versions older than 3.5\n"
-                        "Please try upgrading matplotlib to a more recent version. "
-                        "If the problem persists, please file a report to "
-                        "https://github.com/yt-project/yt/issues/new"
-                    )
-                else:
-                    raise exc
-        if self.colorbar_handler.draw_minorticks:
-            if isinstance(norm, SymLogNorm):
-                if MPL_VERSION < Version("3.5.0b"):
-                    # no known working method to draw symlog minor ticks
-                    # see https://github.com/yt-project/yt/issues/3535
-                    pass
-                else:
-                    flinthresh = 10 ** np.floor(np.log10(norm.linthresh))
-                    absmax = np.abs((norm.vmin, norm.vmax)).max()
-                    if (absmax - flinthresh) / absmax < 0.1:
-                        flinthresh /= 10
-                    mticks = get_symlog_minorticks(flinthresh, norm.vmin, norm.vmax)
-                    if MPL_VERSION < Version("3.5.0b"):
-                        # https://github.com/matplotlib/matplotlib/issues/21258
-                        mticks = self.image.norm(mticks)
-                    self.cax.yaxis.set_ticks(mticks, minor=True)
-
-            elif isinstance(norm, LogNorm):
-                self.cax.minorticks_on()
-                self.cax.xaxis.set_visible(False)
-
-            else:
-                self.cax.minorticks_on()
-        else:
-            self.cax.minorticks_off()
-
         self.image.axes.set_facecolor(self.colorbar_handler.background_color)
+
+        self.cax.tick_params(which="both", direction="in")
+
+        # For creating a multipanel plot by ImageGrid
+        # we may need the location keyword, which requires Matplotlib >= 3.7.0
+        cb_location = getattr(self.cax, "orientation", None)
+        if matplotlib.__version_info__ >= (3, 7):
+            self.cb = self.figure.colorbar(self.image, self.cax, location=cb_location)
+        else:
+            if cb_location in ["top", "bottom"]:
+                warnings.warn(
+                    "Cannot properly set the orientation of colorbar. "
+                    "Consider upgrading matplotlib to version 3.7 or newer",
+                    stacklevel=6,
+                )
+            self.cb = self.figure.colorbar(self.image, self.cax)
+
+        cb_axis: Axis
+        if self.cb.orientation == "vertical":
+            cb_axis = self.cb.ax.yaxis
+        else:
+            cb_axis = self.cb.ax.xaxis
+
+        cb_scale = cb_axis.get_scale()
+        if cb_scale == "symlog":
+            trf = cb_axis.get_transform()
+            if not isinstance(trf, SymmetricalLogTransform):
+                raise RuntimeError
+            cb_axis.set_major_locator(SymmetricalLogLocator(trf))
+            cb_axis.set_major_formatter(
+                LogFormatterMathtext(linthresh=trf.linthresh, base=trf.base)
+            )
+
+        if cb_scale not in ("log", "symlog"):
+            self.cb.ax.ticklabel_format(**fmt_kwargs)
+
+        if self.colorbar_handler.draw_minorticks and cb_scale == "symlog":
+            # no minor ticks are drawn by default in symlog, as of matplotlib 3.7.1
+            # see https://github.com/matplotlib/matplotlib/issues/25994
+            trf = cb_axis.get_transform()
+            if not isinstance(trf, SymmetricalLogTransform):
+                raise RuntimeError
+            if float(trf.base).is_integer():
+                locator = SymmetricalLogLocator(trf, subs=list(range(1, int(trf.base))))
+                cb_axis.set_minor_locator(locator)
+        elif self.colorbar_handler.draw_minorticks:
+            self.cb.minorticks_on()
+        else:
+            self.cb.minorticks_off()
 
     def _validate_axes_extent(self, extent, transform):
         # if the axes are cartopy GeoAxes, this checks that the axes extent
@@ -404,7 +425,7 @@ class ImagePlotMPL(PlotMPL, ABC):
         # - self._draw_axes: bool
         # - self.colorbar_handler: ColorbarHandler
 
-        # optional attribtues
+        # optional attributes
         # - self._unit_aspect: float
 
         # Ensure the figure size along the long axis is always equal to _figure_size
@@ -518,9 +539,12 @@ class ImagePlotMPL(PlotMPL, ABC):
 
     def _get_labels(self):
         labels = super()._get_labels()
-        cbax = self.cb.ax
-        labels += cbax.yaxis.get_ticklabels()
-        labels += [cbax.yaxis.label, cbax.yaxis.get_offset_text()]
+        if getattr(self.cb, "orientation", "vertical") == "horizontal":
+            cbaxis = self.cb.ax.xaxis
+        else:
+            cbaxis = self.cb.ax.yaxis
+        labels += cbaxis.get_ticklabels()
+        labels += [cbaxis.label, cbaxis.get_offset_text()]
         return labels
 
     def hide_axes(self, *, draw_frame=None):
@@ -591,6 +615,7 @@ def get_multi_plot(nx, ny, colorbar="vertical", bw=4, dpi=300, cbar_padding=0.4)
     complicated or more specific sets of multiplots for your own purposes.
     """
     import matplotlib.figure
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
 
     hf, wf = 1.0 / ny, 1.0 / nx
     fudge_x = fudge_y = 1.0
@@ -603,7 +628,6 @@ def get_multi_plot(nx, ny, colorbar="vertical", bw=4, dpi=300, cbar_padding=0.4)
         fudge_x = 1.0
         fudge_y = ny / (cbar_padding + ny)
     fig = matplotlib.figure.Figure((bw * nx / fudge_x, bw * ny / fudge_y), dpi=dpi)
-    from ._mpl_imports import FigureCanvasAgg
 
     fig.set_canvas(FigureCanvasAgg(fig))
     fig.subplots_adjust(

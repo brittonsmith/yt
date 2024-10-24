@@ -6,6 +6,7 @@ import numpy as np
 from yt.data_objects.index_subobjects.grid_patch import AMRGridPatch
 from yt.data_objects.static_output import Dataset
 from yt.funcs import mylog, setdefaultattr
+from yt.geometry.api import Geometry
 from yt.geometry.grid_geometry_handler import GridIndex
 from yt.utilities.cosmology import Cosmology
 from yt.utilities.file_handler import HDF5FileHandler
@@ -142,42 +143,31 @@ class GAMERHierarchy(GridIndex):
         for grid in self.grids:
             # parent->children == itself
             if grid.Parent is not None:
-                assert (
-                    grid in grid.Parent.Children
-                ), "Grid %d, Parent %d, Parent->Children[0] %d" % (
-                    grid.id,
-                    grid.Parent.id,
-                    grid.Parent.Children[0].id,
+                assert grid in grid.Parent.Children, (
+                    f"Grid {grid.id}, Parent {grid.Parent.id}, "
+                    f"Parent->Children[0] {grid.Parent.Children[0].id}"
                 )
 
             # children->parent == itself
             for c in grid.Children:
-                assert c.Parent is grid, "Grid %d, Children %d, Children->Parent %d" % (
-                    grid.id,
-                    c.id,
-                    c.Parent.id,
+                assert c.Parent is grid, (
+                    f"Grid {grid.id}, Children {c.id}, "
+                    f"Children->Parent {c.Parent.id}"
                 )
 
             # all refinement grids should have parent
             if grid.Level > 0:
-                assert (
-                    grid.Parent is not None and grid.Parent.id >= 0
-                ), "Grid %d, Level %d, Parent %d" % (
-                    grid.id,
-                    grid.Level,
-                    grid.Parent.id if grid.Parent is not None else -999,
+                assert grid.Parent is not None and grid.Parent.id >= 0, (
+                    f"Grid {grid.id}, Level {grid.Level}, "
+                    f"Parent {grid.Parent.id if grid.Parent is not None else -999}"
                 )
 
             # parent index is consistent with the loaded dataset
             if grid.Level > 0:
                 father_gid = father_list[grid.id * self.pgroup] // self.pgroup
-                assert (
-                    father_gid == grid.Parent.id
-                ), "Grid %d, Level %d, Parent_Found %d, Parent_Expect %d" % (
-                    grid.id,
-                    grid.Level,
-                    grid.Parent.id,
-                    father_gid,
+                assert father_gid == grid.Parent.id, (
+                    f"Grid {grid.id}, Level {grid.Level}, "
+                    f"Parent_Found {grid.Parent.id}, Parent_Expect {father_gid}"
                 )
 
             # edges between children and parent
@@ -201,6 +191,7 @@ class GAMERHierarchy(GridIndex):
 
 
 class GAMERDataset(Dataset):
+    _load_requirements = ["h5py"]
     _index_class = GAMERHierarchy
     _field_info_class = GAMERFieldInfo
     _handle = None
@@ -218,7 +209,6 @@ class GAMERDataset(Dataset):
         unit_system="cgs",
         default_species_fields=None,
     ):
-
         if self._handle is not None:
             return
 
@@ -254,7 +244,7 @@ class GAMERDataset(Dataset):
         self.storage_filename = storage_filename
 
     def _set_code_unit_attributes(self):
-        if self.parameters["Opt__Unit"]:
+        if self.opt_unit:
             # GAMER units are always in CGS
             setdefaultattr(
                 self, "length_unit", self.quan(self.parameters["Unit_L"], "cm")
@@ -286,7 +276,6 @@ class GAMERDataset(Dataset):
                     mylog.warning("Assuming %8s unit = %f %s", unit, value, cgs)
 
     def _parse_parameter_file(self):
-
         # code-specific parameters
         for t in self._handle["Info"]:
             info_category = self._handle["Info"][t]
@@ -356,6 +345,7 @@ class GAMERDataset(Dataset):
         # make aliases to some frequently used variables
         if parameters["Model"] == "Hydro":
             self.gamma = parameters["Gamma"]
+            self.gamma_cr = self.parameters.get("CR_Gamma", None)
             self.eos = parameters.get("EoS", 1)  # Assume gamma-law by default
             # default to 0.6 for old data format
             self.mu = parameters.get(
@@ -366,14 +356,18 @@ class GAMERDataset(Dataset):
         else:
             self.mhd = 0
             self.srhd = 0
+            # set dummy value of mu here to avoid more complicated workarounds later
+            self.mu = 1.0
 
         # old data format (version < 2210) did not contain any information of code units
-        self.parameters.setdefault("Opt__Unit", 0)
-
-        self.geometry = geometry_parameters[parameters.get("Coordinate", 1)]
+        self.opt_unit = self.parameters.get("Opt__Unit", 0)
+        self.geometry = Geometry(geometry_parameters[parameters.get("Coordinate", 1)])
 
     @classmethod
-    def _is_valid(cls, filename, *args, **kwargs):
+    def _is_valid(cls, filename: str, *args, **kwargs) -> bool:
+        if cls._missing_load_requirements():
+            return False
+
         try:
             # define a unique way to identify GAMER datasets
             f = HDF5FileHandler(filename)

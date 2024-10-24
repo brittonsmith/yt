@@ -88,7 +88,7 @@ class EnzoSimulation(SimulationTimeSeries):
                     new_unit,
                     self.unit_registry.lut[my_unit][0],
                     dimensions.length,
-                    "\\rm{%s}/(1+z)" % my_unit,
+                    f"\\rm{{{my_unit}}}/(1+z)",
                     prefixable=True,
                 )
             self.length_unit = self.quan(
@@ -122,7 +122,6 @@ class EnzoSimulation(SimulationTimeSeries):
         parallel=True,
         setup_function=None,
     ):
-
         """
         Instantiate a DatasetSeries object for a set of outputs.
 
@@ -265,8 +264,7 @@ class EnzoSimulation(SimulationTimeSeries):
             my_outputs = my_all_outputs[
                 int(
                     np.ceil(float(initial_cycle) / self.parameters["CycleSkipDataDump"])
-                ) : (final_cycle / self.parameters["CycleSkipDataDump"])
-                + 1
+                ) : (final_cycle / self.parameters["CycleSkipDataDump"]) + 1
             ]
 
         else:
@@ -495,7 +493,7 @@ class EnzoSimulation(SimulationTimeSeries):
             self.all_time_outputs.append(output)
             index += 1
 
-    def _get_all_outputs(self, find_outputs=False):
+    def _get_all_outputs(self, *, find_outputs=False):
         """
         Get all potential datasets and combine into a time-sorted list.
         """

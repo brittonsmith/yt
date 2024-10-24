@@ -85,7 +85,6 @@ def write_to_gdf(
         particle_type_name=particle_type_name,
         overwrite=overwrite,
     ) as f:
-
         # now add the fields one-by-one
         _write_fields_to_gdf(ds, f, fields, particle_type_name)
 
@@ -128,7 +127,6 @@ def save_field(ds, fields, field_parameters=None):
 def _write_fields_to_gdf(
     ds, fhandle, fields, particle_type_name, field_parameters=None
 ):
-
     for field in fields:
         # add field info to field_types group
         g = fhandle["field_types"]
@@ -147,13 +145,13 @@ def _write_fields_to_gdf(
 
         # check that they actually contain something...
         if display_name:
-            sg.attrs["field_name"] = np.string_(display_name)
+            sg.attrs["field_name"] = np.bytes_(display_name)
         else:
-            sg.attrs["field_name"] = np.string_(str(field))
+            sg.attrs["field_name"] = np.bytes_(str(field))
         if units:
-            sg.attrs["field_units"] = np.string_(units)
+            sg.attrs["field_units"] = np.bytes_(units)
         else:
-            sg.attrs["field_units"] = np.string_("None")
+            sg.attrs["field_units"] = np.bytes_("None")
         # @todo: is this always true?
         sg.attrs["staggering"] = 0
 
@@ -161,7 +159,6 @@ def _write_fields_to_gdf(
     g = fhandle["data"]
     for grid in ds.index.grids:
         for field in fields:
-
             # sanitize get the field info object
             fi = ds._get_field_info(field)
             ftype, fname = fi.name
@@ -184,7 +181,6 @@ def _write_fields_to_gdf(
         for chunk in ds.index._chunk_io(region):
             for grid in chunk.objs:
                 for field in fields:
-
                     # sanitize and get the field info object
                     fi = ds._get_field_info(field)
                     ftype, fname = fi.name
@@ -328,7 +324,7 @@ def _create_new_gdf(
 
     # @todo: Particle type iterator
     sg = g.create_group(particle_type_name)
-    sg["particle_type_name"] = np.string_(particle_type_name)
+    sg["particle_type_name"] = np.bytes_(particle_type_name)
 
     ###
     # root datasets -- info about the grids

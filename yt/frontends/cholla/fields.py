@@ -37,7 +37,6 @@ class ChollaFieldInfo(FieldInfoContainer):
     # In Cholla, conservative variables are written out.
 
     def setup_fluid_fields(self):
-
         unit_system = self.ds.unit_system
 
         # Add velocity fields
@@ -133,7 +132,7 @@ class ChollaFieldInfo(FieldInfoContainer):
 
             def _metallicity(field, data):
                 # Ensuring that there are no negative metallicities
-                return np.clip(data[("cholla", "color")], 0, np.inf) * Zsun
+                return np.clip(data["cholla", "color"], 0, np.inf) * Zsun
 
             self.add_field(
                 ("cholla", "metallicity"),

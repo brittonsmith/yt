@@ -1,7 +1,6 @@
 import os
 import re
 import weakref
-from typing import Type
 
 import numpy as np
 
@@ -9,8 +8,9 @@ from yt.data_objects.index_subobjects.grid_patch import AMRGridPatch
 from yt.data_objects.static_output import Dataset
 from yt.fields.field_info_container import FieldInfoContainer
 from yt.funcs import mylog, setdefaultattr
+from yt.geometry.api import Geometry
 from yt.geometry.grid_geometry_handler import GridIndex
-from yt.utilities.file_handler import HDF5FileHandler, warn_h5py
+from yt.utilities.file_handler import HDF5FileHandler, valid_hdf5_signature
 from yt.utilities.lib.misc_utilities import get_box_grids_level
 from yt.utilities.on_demand_imports import _h5py as h5py
 from yt.utilities.parallel_tools.parallel_analysis_interface import parallel_root_only
@@ -80,7 +80,6 @@ class ChomboGrid(AMRGridPatch):
 
 
 class ChomboHierarchy(GridIndex):
-
     grid = ChomboGrid
     _data_file = None
 
@@ -102,9 +101,8 @@ class ChomboHierarchy(GridIndex):
         self._read_particles()
 
     def _read_particles(self):
-
         # only do anything if the dataset contains particles
-        if not any([f[1].startswith("particle_") for f in self.field_list]):
+        if not any(f[1].startswith("particle_") for f in self.field_list):
             return
 
         self.num_particles = 0
@@ -127,7 +125,6 @@ class ChomboHierarchy(GridIndex):
     # we will look for "fluid" fields by finding the string "component" in
     # the output file, and "particle" fields by finding the string "particle".
     def _detect_output_fields(self):
-
         # look for fluid fields
         output_fields = []
         for key, val in self._handle.attrs.items():
@@ -222,7 +219,7 @@ class ChomboHierarchy(GridIndex):
             get_box_grids_level(
                 self.grid_left_edge[i, :],
                 self.grid_right_edge[i, :],
-                self.grid_levels[i] + 1,
+                self.grid_levels[i].item() + 1,
                 self.grid_left_edge,
                 self.grid_right_edge,
                 self.grid_levels,
@@ -237,8 +234,9 @@ class ChomboHierarchy(GridIndex):
 
 
 class ChomboDataset(Dataset):
+    _load_requirements = ["h5py"]
     _index_class = ChomboHierarchy
-    _field_info_class: Type[FieldInfoContainer] = ChomboFieldInfo
+    _field_info_class: type[FieldInfoContainer] = ChomboFieldInfo
 
     def __init__(
         self,
@@ -254,7 +252,7 @@ class ChomboDataset(Dataset):
         self._handle = HDF5FileHandler(filename)
         self.dataset_type = dataset_type
 
-        self.geometry = "cartesian"
+        self.geometry = Geometry.CARTESIAN
         self.ini_filename = ini_filename
         self.fullplotdir = os.path.abspath(filename)
         Dataset.__init__(
@@ -292,7 +290,6 @@ class ChomboDataset(Dataset):
         return f
 
     def _parse_parameter_file(self):
-
         self.dimensionality = self._handle["Chombo_global/"].attrs["SpaceDim"]
         self.domain_left_edge = self._calc_left_edge()
         self.domain_right_edge = self._calc_right_edge()
@@ -362,7 +359,9 @@ class ChomboDataset(Dataset):
         return R_index - L_index
 
     @classmethod
-    def _is_valid(cls, filename, *args, **kwargs):
+    def _is_valid(cls, filename: str, *args, **kwargs) -> bool:
+        if cls._missing_load_requirements():
+            return False
 
         if not is_chombo_hdf5(filename):
             return False
@@ -382,8 +381,8 @@ class ChomboDataset(Dataset):
                 fileh = h5py.File(filename, mode="r")
                 valid = "Chombo_global" in fileh["/"]
                 # ORION2 simulations should always have this:
-                valid = valid and not ("CeilVA_mass" in fileh.attrs.keys())
-                valid = valid and not ("Charm_global" in fileh.keys())
+                valid = valid and "CeilVA_mass" not in fileh.attrs.keys()
+                valid = valid and "Charm_global" not in fileh.keys()
                 fileh.close()
                 return valid
             except Exception:
@@ -466,7 +465,6 @@ class PlutoHierarchy(ChomboHierarchy):
 
 
 class PlutoDataset(ChomboDataset):
-
     _index_class = PlutoHierarchy
     _field_info_class = PlutoFieldInfo
 
@@ -480,7 +478,6 @@ class PlutoDataset(ChomboDataset):
         unit_system="cgs",
         default_species_fields=None,
     ):
-
         ChomboDataset.__init__(
             self,
             filename,
@@ -514,8 +511,7 @@ class PlutoDataset(ChomboDataset):
             domain_right_edge = np.zeros(self.dimensionality)
             for il, ll in enumerate(
                 lines[
-                    lines.index("[Grid]")
-                    + 2 : lines.index("[Grid]")
+                    lines.index("[Grid]") + 2 : lines.index("[Grid]")
                     + 2
                     + self.dimensionality
                 ]
@@ -525,8 +521,7 @@ class PlutoDataset(ChomboDataset):
             self._periodicity = [0] * 3
             for il, ll in enumerate(
                 lines[
-                    lines.index("[Boundary]")
-                    + 2 : lines.index("[Boundary]")
+                    lines.index("[Boundary]") + 2 : lines.index("[Boundary]")
                     + 2
                     + 6 : 2
                 ]
@@ -559,7 +554,9 @@ class PlutoDataset(ChomboDataset):
         self._determine_current_time()
 
     @classmethod
-    def _is_valid(cls, filename, *args, **kwargs):
+    def _is_valid(cls, filename: str, *args, **kwargs) -> bool:
+        if cls._missing_load_requirements():
+            return False
 
         if not is_chombo_hdf5(filename):
             return False
@@ -582,7 +579,6 @@ class Orion2Hierarchy(ChomboHierarchy):
         ChomboHierarchy.__init__(self, ds, dataset_type)
 
     def _detect_output_fields(self):
-
         # look for fluid fields
         output_fields = []
         for key, val in self._handle.attrs.items():
@@ -641,7 +637,7 @@ class Orion2Hierarchy(ChomboHierarchy):
 
 
 class Orion2Dataset(ChomboDataset):
-
+    _load_requirements = ["h5py"]
     _index_class = Orion2Hierarchy
     _field_info_class = Orion2FieldInfo
 
@@ -654,7 +650,6 @@ class Orion2Dataset(ChomboDataset):
         units_override=None,
         default_species_fields=None,
     ):
-
         ChomboDataset.__init__(
             self,
             filename,
@@ -720,7 +715,9 @@ class Orion2Dataset(ChomboDataset):
                 self.gamma = np.float64(vals)
 
     @classmethod
-    def _is_valid(cls, filename, *args, **kwargs):
+    def _is_valid(cls, filename: str, *args, **kwargs) -> bool:
+        if cls._missing_load_requirements():
+            return False
 
         if not is_chombo_hdf5(filename):
             return False
@@ -759,7 +756,7 @@ class ChomboPICHierarchy(ChomboHierarchy):
 
 
 class ChomboPICDataset(ChomboDataset):
-
+    _load_requirements = ["h5py"]
     _index_class = ChomboPICHierarchy
     _field_info_class = ChomboPICFieldInfo3D
 
@@ -771,7 +768,6 @@ class ChomboPICDataset(ChomboDataset):
         ini_filename=None,
         units_override=None,
     ):
-
         ChomboDataset.__init__(
             self,
             filename,
@@ -788,9 +784,12 @@ class ChomboPICDataset(ChomboDataset):
             self._field_info_class = ChomboPICFieldInfo2D
 
     @classmethod
-    def _is_valid(cls, filename, *args, **kwargs):
+    def _is_valid(cls, filename: str, *args, **kwargs) -> bool:
+        if not valid_hdf5_signature(filename):
+            return False
 
-        warn_h5py(filename)
+        if cls._missing_load_requirements():
+            return False
 
         if not is_chombo_hdf5(filename):
             return False

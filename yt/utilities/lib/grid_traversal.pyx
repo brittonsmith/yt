@@ -1,6 +1,5 @@
 # distutils: include_dirs = LIB_DIR
 # distutils: libraries = STD_LIBS
-# distutils: sources = FIXED_INTERP
 # distutils: language = c++
 # distutils: extra_compile_args = CPP14_FLAG
 # distutils: extra_link_args = CPP14_FLAG
@@ -20,9 +19,6 @@ from libc.math cimport atan2, cos, fabs, floor, sin, sqrt
 
 from yt.utilities.lib.fp_utils cimport fmin
 
-from .fixed_interpolator cimport *
-
-DEF Nch = 4
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
@@ -33,7 +29,7 @@ cdef int walk_volume(VolumeContainer *vc,
                      sampler_function *sample,
                      void *data,
                      np.float64_t *return_t = NULL,
-                     np.float64_t max_t = 1.0) nogil:
+                     np.float64_t max_t = 1.0) noexcept nogil:
     cdef int cur_ind[3]
     cdef int step[3]
     cdef int x, y, i, hit, direction

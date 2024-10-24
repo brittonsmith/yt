@@ -53,7 +53,6 @@ def fake_gadget_binary(
     with open(filename, "wb") as fp:
         # Generate and write header blocks
         for i_header, header_spec in enumerate(header.spec):
-
             specs = []
             for name, dim, dtype in header_spec:
                 # workaround a FutureWarning in numpy where np.dtype(name, type, 1)
@@ -73,7 +72,7 @@ def fake_gadget_binary(
                 header["HubbleParam"] = 1
             write_block(fp, header, endian, fmt, "HEAD")
 
-        npart = dict(zip(ptype_spec, npart))
+        npart = dict(zip(ptype_spec, npart, strict=True))
         for fs in field_spec:
             # Parse field name and particle type
             if isinstance(fs, str):
@@ -96,8 +95,9 @@ def fake_gadget_binary(
             dtype = endian + dtype
             # Generate and write field block
             data = []
+            rng = np.random.default_rng()
             for pt in ptype:
-                data += [np.random.rand(npart[pt], dim)]
+                data += [rng.random((npart[pt], dim))]
             data = np.concatenate(data).astype(dtype)
             if field in block_ids:
                 block_id = block_ids[field]

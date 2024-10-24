@@ -11,7 +11,6 @@ from yt.data_objects.selection_objects.data_selection_objects import (
 from yt.data_objects.static_output import (
     ParticleDataset,
     ParticleFile,
-    validate_index_order,
 )
 from yt.frontends.ytdata.data_structures import SavedDataset
 from yt.funcs import parse_h5_attr
@@ -100,6 +99,7 @@ class YTHaloCatalogDataset(SavedDataset):
     in yt_astro_analysis.
     """
 
+    _load_requirements = ["h5py"]
     _index_class = ParticleIndex
     _file_class = YTHaloCatalogFile
     _field_info_class = YTHaloCatalogFieldInfo
@@ -123,7 +123,7 @@ class YTHaloCatalogDataset(SavedDataset):
         units_override=None,
         unit_system="cgs",
     ):
-        self.index_order = validate_index_order(index_order)
+        self.index_order = index_order
         super().__init__(
             filename,
             dataset_type,
@@ -165,9 +165,13 @@ class YTHaloCatalogDataset(SavedDataset):
         super()._parse_parameter_file()
 
     @classmethod
-    def _is_valid(cls, filename, *args, **kwargs):
+    def _is_valid(cls, filename: str, *args, **kwargs) -> bool:
         if not filename.endswith(".h5"):
             return False
+
+        if cls._missing_load_requirements():
+            return False
+
         with h5py.File(filename, mode="r") as f:
             if (
                 "data_type" in f.attrs
@@ -385,7 +389,7 @@ class YTHaloDataset(HaloDataset):
         pass
 
     @classmethod
-    def _is_valid(self, *args, **kwargs):
+    def _is_valid(cls, filename: str, *args, **kwargs) -> bool:
         # We don't ever want this to be loaded by yt.load.
         return False
 

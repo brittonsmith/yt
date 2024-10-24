@@ -1,16 +1,19 @@
 import abc
+import sys
 from collections import defaultdict
 from numbers import Number
-from typing import List, Optional, Type, Union
+from typing import TYPE_CHECKING, Union
 
 import matplotlib
 import numpy as np
-from matplotlib.colors import Normalize
 from more_itertools import always_iterable
 from unyt.exceptions import UnitConversionError
 
 from yt._maintenance.deprecation import issue_deprecation_warning
+from yt._typing import AlphaT
 from yt.data_objects.image_array import ImageArray
+from yt.frontends.sph.data_structures import ParticleDataset
+from yt.frontends.stream.data_structures import StreamParticlesDataset
 from yt.frontends.ytdata.data_structures import YTSpatialPlotDataset
 from yt.funcs import (
     fix_axis,
@@ -19,8 +22,10 @@ from yt.funcs import (
     iter_fields,
     mylog,
     obj_length,
+    parse_center_array,
     validate_moment,
 )
+from yt.geometry.api import Geometry
 from yt.units.unit_object import Unit  # type: ignore
 from yt.units.unit_registry import UnitParseError  # type: ignore
 from yt.units.yt_array import YTArray, YTQuantity
@@ -36,7 +41,11 @@ from yt.utilities.orientation import Orientation
 from yt.visualization._handlers import ColorbarHandler, NormHandler
 from yt.visualization.base_plot_types import CallbackWrapper, ImagePlotMPL
 
-from ._commons import _swap_axes_extents, get_default_from_config
+from ._commons import (
+    _get_units_label,
+    _swap_axes_extents,
+    get_default_from_config,
+)
 from .fixed_resolution import (
     FixedResolutionBuffer,
     OffAxisProjectionFixedResolutionBuffer,
@@ -49,12 +58,13 @@ from .plot_container import (
     invalidate_plot,
 )
 
-import sys  # isort: skip
+if TYPE_CHECKING:
+    from yt.visualization.plot_modifications import PlotCallback
 
-if sys.version_info >= (3, 10):
-    pass
+if sys.version_info >= (3, 11):
+    from typing import assert_never
 else:
-    from yt._maintenance.backports import zip
+    from typing_extensions import assert_never
 
 
 def get_window_parameters(axis, center, width, ds):
@@ -71,20 +81,33 @@ def get_window_parameters(axis, center, width, ds):
     return (bounds, center, display_center)
 
 
-def get_oblique_window_parameters(normal, center, width, ds, depth=None):
-    display_center, center = ds.coordinates.sanitize_center(center, 4)
+def get_oblique_window_parameters(
+    normal, center, width, ds, depth=None, get3bounds=False
+):
+    center, display_center = ds.coordinates.sanitize_center(center, axis=None)
     width = ds.coordinates.sanitize_width(normal, width, depth)
 
     if len(width) == 2:
         # Transforming to the cutting plane coordinate system
-        center = (center - ds.domain_left_edge) / ds.domain_width - 0.5
+        # the original dimensionless center messes up off-axis
+        # SPH projections though -> don't use this center there
+        center = (
+            (center - ds.domain_left_edge) / ds.domain_width - 0.5
+        ) * ds.domain_width
         (normal, perp1, perp2) = ortho_find(normal)
         mat = np.transpose(np.column_stack((perp1, perp2, normal)))
         center = np.dot(mat, center)
 
     w = tuple(el.in_units("code_length") for el in width)
     bounds = tuple(((2 * (i % 2)) - 1) * w[i // 2] / 2 for i in range(len(w) * 2))
-
+    if get3bounds and depth is None:
+        # off-axis projection, depth not specified
+        # -> set 'large enough' depth using half the box diagonal + margin
+        d2 = ds.domain_width[0].in_units("code_length") ** 2
+        d2 += ds.domain_width[1].in_units("code_length") ** 2
+        d2 += ds.domain_width[2].in_units("code_length") ** 2
+        diag = np.sqrt(d2)
+        bounds = bounds + (-0.51 * diag, 0.51 * diag)
     return (bounds, center)
 
 
@@ -180,9 +203,8 @@ class PlotWindow(ImagePlotContainer, abc.ABC):
         aspect=None,
         setup=False,
         *,
-        geometry="cartesian",
-    ):
-
+        geometry: Geometry = Geometry.CARTESIAN,
+    ) -> None:
         # axis manipulation operations are callback-only:
         self._swap_axes_input = False
         self._flip_vertical = False
@@ -191,7 +213,7 @@ class PlotWindow(ImagePlotContainer, abc.ABC):
         self.center = None
         self._periodic = periodic
         self.oblique = oblique
-        self._equivalencies = defaultdict(lambda: (None, {}))
+        self._equivalencies = defaultdict(lambda: (None, {}))  # type: ignore [var-annotated]
         self.buff_size = buff_size
         self.antialias = antialias
         self._axes_unit_names = None
@@ -204,22 +226,25 @@ class PlotWindow(ImagePlotContainer, abc.ABC):
         fields = list(iter_fields(fields))
         self.override_fields = list(set(fields).intersection(set(skip)))
         self.fields = [f for f in fields if f not in skip]
+        self._frb: FixedResolutionBuffer | None = None
         super().__init__(data_source, window_size, fontsize)
 
         self._set_window(bounds)  # this automatically updates the data and plot
-        if (
-            geometry
-            in (
-                "spherical",
-                "cylindrical",
-                "geographic",
-                "internal_geographic",
-                "polar",
-            )
-            and origin != "native"
-        ):
-            mylog.info("Setting origin='native' for %s geometry.", geometry)
-            origin = "native"
+
+        if origin != "native":
+            if geometry is Geometry.CARTESIAN or geometry is Geometry.SPECTRAL_CUBE:
+                pass
+            elif (
+                geometry is Geometry.CYLINDRICAL
+                or geometry is Geometry.POLAR
+                or geometry is Geometry.SPHERICAL
+                or geometry is Geometry.GEOGRAPHIC
+                or geometry is Geometry.INTERNAL_GEOGRAPHIC
+            ):
+                mylog.info("Setting origin='native' for %s geometry.", geometry)
+                origin = "native"
+            else:
+                assert_never(geometry)
 
         self.origin = origin
         if self.data_source.center is not None and not oblique:
@@ -241,15 +266,11 @@ class PlotWindow(ImagePlotContainer, abc.ABC):
         self._setup_plots()
 
         for field in self.data_source._determine_fields(self.fields):
-            finfo = self.data_source.ds._get_field_info(*field)
+            finfo = self.data_source.ds._get_field_info(field)
             pnh = self.plots[field].norm_handler
-            if finfo.take_log is False:
-                # take_log can be `None` so we explicitly compare against a boolean
-                pnh.norm_type = Normalize
-            else:
-                # do nothing, the norm handler is responsible for
-                # determining a viable norm, and defaults to LogNorm/SymLogNorm
-                pass
+
+            # take_log can be `None` so we explicitly compare against a boolean
+            pnh.prefer_log = finfo.take_log is not False
 
             # override from user configuration if any
             log, linthresh = get_default_from_config(
@@ -273,8 +294,6 @@ class PlotWindow(ImagePlotContainer, abc.ABC):
         for ds in self.ts.piter(*args, **kwargs):
             self._switch_ds(ds)
             yield self
-
-    _frb = None
 
     @property
     def frb(self):
@@ -324,7 +343,7 @@ class PlotWindow(ImagePlotContainer, abc.ABC):
         # At this point the frb has the valid bounds, size, aliasing, etc.
         if old_fields is not None:
             # Restore the old fields
-            for key, units in zip(old_fields, old_units):
+            for key, units in zip(old_fields, old_units, strict=False):
                 self._frb.render(key)
                 equiv = self._equivalencies[key]
                 if equiv[0] is None:
@@ -421,7 +440,7 @@ class PlotWindow(ImagePlotContainer, abc.ABC):
         else:
             raise TypeError(
                 "The arguments of the pan function must be a sequence of floats,\n"
-                "quantities, or (float, unit) tuples. Received %s." % (deltas,)
+                f"quantities, or (float, unit) tuples. Received {deltas}"
             )
         self.xlim = (self.xlim[0] + deltas[0], self.xlim[1] + deltas[0])
         self.ylim = (self.ylim[0] + deltas[1], self.ylim[1] + deltas[1])
@@ -847,26 +866,24 @@ class PWViewerMPL(PlotWindow):
     """Viewer using matplotlib as a backend via the WindowPlotMPL."""
 
     _current_field = None
-    _frb_generator: Optional[Type[FixedResolutionBuffer]] = None
-    _plot_type: Optional[str] = None
+    _frb_generator: type[FixedResolutionBuffer] | None = None
+    _plot_type: str | None = None
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         if self._frb_generator is None:
             self._frb_generator = kwargs.pop("frb_generator")
         if self._plot_type is None:
             self._plot_type = kwargs.pop("plot_type")
         self._splat_color = kwargs.pop("splat_color", None)
-        self._frb: Optional[FixedResolutionBuffer] = None
         PlotWindow.__init__(self, *args, **kwargs)
 
         # import type here to avoid import cycles
         # note that this import statement is actually crucial at runtime:
         # the filter methods for the present class are defined only when
         # fixed_resolution_filters is imported, so we need to guarantee
-        # that it happens no later than instanciation
-        from yt.visualization.plot_modifications import PlotCallback
+        # that it happens no later than instantiation
 
-        self._callbacks: List[PlotCallback] = []
+        self._callbacks: list[PlotCallback] = []
 
     @property
     def _data_valid(self) -> bool:
@@ -875,7 +892,7 @@ class PWViewerMPL(PlotWindow):
     @_data_valid.setter
     def _data_valid(self, value):
         if self._frb is None:
-            # we delegate the (in)validation responsability to the FRB
+            # we delegate the (in)validation responsibility to the FRB
             # if we don't have one yet, we can exit without doing anything
             return
         else:
@@ -1047,7 +1064,7 @@ class PWViewerMPL(PlotWindow):
 
             # extentx/y arrays inherit units from xlim and ylim attributes
             # and these attributes are always length even for angular and
-            # dimensionless axes so we need to stip out units for consistency
+            # dimensionless axes so we need to strip out units for consistency
             if unit_x == "dimensionless":
                 extentx = extentx / extentx.units
             else:
@@ -1059,7 +1076,10 @@ class PWViewerMPL(PlotWindow):
 
             extent = [*extentx, *extenty]
 
-            image = self.frb[f]
+            image = self.frb.get_image(f)
+            mask = self.frb.get_mask(f)
+            assert mask is None or mask.dtype == bool
+
             font_size = self._font_properties.get_size()
 
             if f in self.plots.keys():
@@ -1123,6 +1143,7 @@ class PWViewerMPL(PlotWindow):
                 self._transform,
                 norm_handler=pnh,
                 colorbar_handler=cbh,
+                alpha=mask.astype("float64") if mask is not None else None,
             )
 
             axes_unit_labels = self._get_axes_unit_labels(unit_x, unit_y)
@@ -1181,26 +1202,24 @@ class PWViewerMPL(PlotWindow):
             self.plots[f].axes.set_ylabel(labels[1])
 
             # Determine the units of the data
-            units = Unit(self.frb[f].units, registry=self.ds.unit_registry)
+            units = Unit(image.units, registry=self.ds.unit_registry)
             units = units.latex_representation()
 
             if colorbar_label is None:
                 colorbar_label = image.info["label"]
                 if getattr(self, "moment", 1) == 2:
-                    colorbar_label = "%s \\rm{Standard Deviation}" % colorbar_label
+                    colorbar_label = f"{colorbar_label} \\rm{{Standard Deviation}}"
                 if hasattr(self, "projected"):
-                    colorbar_label = "$\\rm{Projected }$ %s" % colorbar_label
-                if units is None or units == "":
-                    pass
-                else:
-                    colorbar_label += r"$\ \ \left(" + units + r"\right)$"
+                    colorbar_label = f"$\\rm{{Projected }}$ {colorbar_label}"
+                if units is not None and units != "":
+                    colorbar_label += _get_units_label(units)
 
             parser = MathTextParser("Agg")
-            from pyparsing import ParseFatalException
 
             try:
                 parser.parse(colorbar_label)
-            except ParseFatalException as err:
+            except Exception as err:
+                # unspecified exceptions might be raised from matplotlib via its own dependencies
                 raise YTCannotParseUnitDisplayName(f, colorbar_label, str(err)) from err
 
             self.plots[f].cb.set_label(colorbar_label)
@@ -1235,11 +1254,13 @@ class PWViewerMPL(PlotWindow):
 
     def setup_callbacks(self):
         issue_deprecation_warning(
-            "The PWViewer.setup_callbacks method is a no-op.", since="4.1.0"
+            "The PWViewer.setup_callbacks method is a no-op.",
+            since="4.1",
+            stacklevel=3,
         )
 
     @invalidate_plot
-    def clear_annotations(self, index: Optional[int] = None):
+    def clear_annotations(self, index: int | None = None):
         """
         Clear callbacks from the plot.  If index is not set, clear all
         callbacks.  If index is set, clear that index (ie 0 is the first one
@@ -1367,13 +1388,14 @@ class PWViewerMPL(PlotWindow):
         return fig
 
 
-class NormalPlot(abc.ABC):
+class NormalPlot:
     """This is the abstraction for SlicePlot and ProjectionPlot, where
     we define the common sanitizing mechanism for user input (normal direction).
+    It is implemented as a mixin class.
     """
 
     @staticmethod
-    def sanitize_normal_vector(ds, normal) -> Union[str, np.ndarray]:
+    def sanitize_normal_vector(ds, normal) -> str | np.ndarray:
         """Return the name of a cartesian axis whener possible,
         or a 3-element 1D ndarray of float64 in any other valid case.
         Fail with a descriptive error message otherwise.
@@ -1388,7 +1410,7 @@ class NormalPlot(abc.ABC):
                 )
             return normal
 
-        if isinstance(normal, int):
+        if isinstance(normal, (int, np.integer)):
             if normal not in (0, 1, 2):
                 raise ValueError(
                     f"{normal} is not a valid axis identifier. Expected either 0, 1, or 2."
@@ -1442,13 +1464,13 @@ class SlicePlot(NormalPlot):
         simulation output to be plotted.
     normal : int, str, or 3-element sequence of floats
         This specifies the normal vector to the slice.
-        Valid int values are 0, 1 and 2. Coresponding str values depend on the
+        Valid int values are 0, 1 and 2. Corresponding str values depend on the
         geometry of the dataset and are generally given by `ds.coordinates.axis_order`.
         E.g. in cartesian they are 'x', 'y' and 'z'.
         An arbitrary normal vector may be specified as a 3-element sequence of floats.
 
         This returns a :class:`OffAxisSlicePlot` object or a
-        :class:`AxisAlignedSlicePlot` object, depending on wether the requested
+        :class:`AxisAlignedSlicePlot` object, depending on whether the requested
         normal directions corresponds to a natural axis of the dataset's geometry.
 
     fields : a (or a list of) 2-tuple of strings (ftype, fname)
@@ -1460,16 +1482,27 @@ class SlicePlot(NormalPlot):
     Keyword Arguments
     -----------------
 
-    center : A sequence floats, a string, or a tuple.
-         The coordinate of the center of the image. If set to 'c', 'center' or
-         left blank, the plot is centered on the middle of the domain. If set to
-         'max' or 'm', the center will be located at the maximum of the
-         ('gas', 'density') field. Centering on the max or min of a specific
-         field is supported by providing a tuple such as ("min","temperature") or
-         ("max","dark_matter_density"). Units can be specified by passing in *center*
-         as a tuple containing a coordinate and string unit name or by passing
-         in a YTArray. If a list or unitless array is supplied, code units are
-         assumed.
+    center : 'center', 'c', 'left', 'l', 'right', 'r', id of a global extremum, or array-like
+        The coordinate of the selection's center.
+        Defaults to the 'center', i.e. center of the domain.
+
+        Centering on the min or max of a field is supported by passing a tuple
+        such as ('min', ('gas', 'density')) or ('max', ('gas', 'temperature'). A
+        single string may also be used (e.g. "min_density" or
+        "max_temperature"), though it's not as flexible and does not allow to
+        select an exact field/particle type. With this syntax, the first field
+        matching the provided name is selected.
+        'max' or 'm' can be used as a shortcut for ('max', ('gas', 'density'))
+        'min' can be used as a shortcut for ('min', ('gas', 'density'))
+
+        One can also select an exact point as a 3 element coordinate sequence,
+        e.g. [0.5, 0.5, 0]
+        Units can be specified by passing in *center* as a tuple containing a
+        3-element coordinate sequence and string unit name, e.g. ([0, 0.5, 0.5], "cm"),
+        or by passing in a YTArray. Code units are assumed if unspecified.
+
+        The domain edges along the selected *axis* can be selected with
+        'left'/'l' and 'right'/'r' respectively.
     width : tuple or a float.
          Width can have four different formats to support windows with variable
          x and y widths.  They are:
@@ -1599,14 +1632,14 @@ class ProjectionPlot(NormalPlot):
         This is the dataset object corresponding to the
         simulation output to be plotted.
     normal : int, str, or 3-element sequence of floats
-        This specifies the normal vector to the slice.
-        Valid int values are 0, 1 and 2. Coresponding str values depend on the
+        This specifies the normal vector to the projection.
+        Valid int values are 0, 1 and 2. Corresponding str values depend on the
         geometry of the dataset and are generally given by `ds.coordinates.axis_order`.
         E.g. in cartesian they are 'x', 'y' and 'z'.
         An arbitrary normal vector may be specified as a 3-element sequence of floats.
 
         This function will return a :class:`OffAxisProjectionPlot` object or a
-        :class:`AxisAlignedProjectionPlot` object, depending on wether the requested
+        :class:`AxisAlignedProjectionPlot` object, depending on whether the requested
         normal directions corresponds to a natural axis of the dataset's geometry.
 
     fields : a (or a list of) 2-tuple of strings (ftype, fname)
@@ -1632,7 +1665,6 @@ class ProjectionPlot(NormalPlot):
     def __new__(  # type: ignore
         cls, ds, normal, fields, *args, **kwargs
     ) -> Union["AxisAlignedProjectionPlot", "OffAxisProjectionPlot"]:
-
         if cls is ProjectionPlot:
             normal = cls.sanitize_normal_vector(ds, normal)
             if isinstance(normal, str):
@@ -1663,16 +1695,27 @@ class AxisAlignedSlicePlot(SlicePlot, PWViewerMPL):
          or the axis name itself
     fields : string
          The name of the field(s) to be plotted.
-    center : A sequence of floats, a string, or a tuple.
-         The coordinate of the center of the image. If set to 'c', 'center' or
-         left blank, the plot is centered on the middle of the domain. If set to
-         'max' or 'm', the center will be located at the maximum of the
-         ('gas', 'density') field. Centering on the max or min of a specific
-         field is supported by providing a tuple such as ("min","temperature") or
-         ("max","dark_matter_density"). Units can be specified by passing in *center*
-         as a tuple containing a coordinate and string unit name or by passing
-         in a YTArray. If a list or unitless array is supplied, code units are
-         assumed.
+    center : 'center', 'c', 'left', 'l', 'right', 'r', id of a global extremum, or array-like
+        The coordinate of the selection's center.
+        Defaults to the 'center', i.e. center of the domain.
+
+        Centering on the min or max of a field is supported by passing a tuple
+        such as ('min', ('gas', 'density')) or ('max', ('gas', 'temperature'). A
+        single string may also be used (e.g. "min_density" or
+        "max_temperature"), though it's not as flexible and does not allow to
+        select an exact field/particle type. With this syntax, the first field
+        matching the provided name is selected.
+        'max' or 'm' can be used as a shortcut for ('max', ('gas', 'density'))
+        'min' can be used as a shortcut for ('min', ('gas', 'density'))
+
+        One can also select an exact point as a 3 element coordinate sequence,
+        e.g. [0.5, 0.5, 0]
+        Units can be specified by passing in *center* as a tuple containing a
+        3-element coordinate sequence and string unit name, e.g. ([0, 0.5, 0.5], "cm"),
+        or by passing in a YTArray. Code units are assumed if unspecified.
+
+        The domain edges along the selected *axis* can be selected with
+        'left'/'l' and 'right'/'r' respectively.
     width : tuple or a float.
          Width can have four different formats to support windows with variable
          x and y widths.  They are:
@@ -1755,6 +1798,7 @@ class AxisAlignedSlicePlot(SlicePlot, PWViewerMPL):
     >>> p.save("sliceplot")
 
     """
+
     _plot_type = "Slice"
     _frb_generator = FixedResolutionBuffer
 
@@ -1763,7 +1807,7 @@ class AxisAlignedSlicePlot(SlicePlot, PWViewerMPL):
         ds,
         normal,
         fields,
-        center="c",
+        center="center",
         width=None,
         axes_unit=None,
         origin="center-window",
@@ -1787,9 +1831,12 @@ class AxisAlignedSlicePlot(SlicePlot, PWViewerMPL):
         normal = self.sanitize_normal_vector(ds, normal)
         # this will handle time series data and controllers
         axis = fix_axis(normal, ds)
+        # print('center at SlicePlot init: ', center)
+        # print('current domain left edge: ', ds.domain_left_edge)
         (bounds, center, display_center) = get_window_parameters(
             axis, center, width, ds
         )
+        # print('center after get_window_parameters: ', center)
         if field_parameters is None:
             field_parameters = {}
 
@@ -1845,16 +1892,27 @@ class AxisAlignedProjectionPlot(ProjectionPlot, PWViewerMPL):
         or the axis name itself
     fields : string
         The name of the field(s) to be plotted.
-    center : A sequence of floats, a string, or a tuple.
-        The coordinate of the center of the image. If set to 'c', 'center' or
-        left blank, the plot is centered on the middle of the domain. If set to
-        'max' or 'm', the center will be located at the maximum of the
-        ('gas', 'density') field. Centering on the max or min of a specific
-        field is supported by providing a tuple such as ("min","temperature") or
-        ("max","dark_matter_density"). Units can be specified by passing in *center*
-        as a tuple containing a coordinate and string unit name or by passing
-        in a YTArray. If a list or unitless array is supplied, code units are
-        assumed.
+    center : 'center', 'c', 'left', 'l', 'right', 'r', id of a global extremum, or array-like
+        The coordinate of the selection's center.
+        Defaults to the 'center', i.e. center of the domain.
+
+        Centering on the min or max of a field is supported by passing a tuple
+        such as ('min', ('gas', 'density')) or ('max', ('gas', 'temperature'). A
+        single string may also be used (e.g. "min_density" or
+        "max_temperature"), though it's not as flexible and does not allow to
+        select an exact field/particle type. With this syntax, the first field
+        matching the provided name is selected.
+        'max' or 'm' can be used as a shortcut for ('max', ('gas', 'density'))
+        'min' can be used as a shortcut for ('min', ('gas', 'density'))
+
+        One can also select an exact point as a 3 element coordinate sequence,
+        e.g. [0.5, 0.5, 0]
+        Units can be specified by passing in *center* as a tuple containing a
+        3-element coordinate sequence and string unit name, e.g. ([0, 0.5, 0.5], "cm"),
+        or by passing in a YTArray. Code units are assumed if unspecified.
+
+        The domain edges along the selected *axis* can be selected with
+        'left'/'l' and 'right'/'r' respectively.
     width : tuple or a float.
         Width can have four different formats to support windows with variable
         x and y widths.  They are:
@@ -1970,6 +2028,7 @@ class AxisAlignedProjectionPlot(ProjectionPlot, PWViewerMPL):
     >>> p = AxisAlignedProjectionPlot(ds, "z", ("gas", "density"), width=(20, "kpc"))
 
     """
+
     _plot_type = "Projection"
     _frb_generator = FixedResolutionBuffer
 
@@ -1978,7 +2037,7 @@ class AxisAlignedProjectionPlot(ProjectionPlot, PWViewerMPL):
         ds,
         normal,
         fields,
-        center="c",
+        center="center",
         width=None,
         axes_unit=None,
         weight_field=None,
@@ -1998,7 +2057,8 @@ class AxisAlignedProjectionPlot(ProjectionPlot, PWViewerMPL):
             issue_deprecation_warning(
                 "'mip' method is a deprecated alias for 'max'. "
                 "Please use method='max' directly.",
-                since="4.1.0",
+                since="4.1",
+                stacklevel=3,
             )
             method = "max"
         normal = self.sanitize_normal_vector(ds, normal)
@@ -2079,16 +2139,24 @@ class OffAxisSlicePlot(SlicePlot, PWViewerMPL):
          The vector normal to the slicing plane.
     fields : string
          The name of the field(s) to be plotted.
-    center : A sequence of floats, a string, or a tuple.
-         The coordinate of the center of the image. If set to 'c', 'center' or
-         left blank, the plot is centered on the middle of the domain. If set to
-         'max' or 'm', the center will be located at the maximum of the
-         ('gas', 'density') field. Centering on the max or min of a specific
-         field is supported by providing a tuple such as ("min","temperature") or
-         ("max","dark_matter_density"). Units can be specified by passing in *center*
-         as a tuple containing a coordinate and string unit name or by passing
-         in a YTArray. If a list or unitless array is supplied, code units are
-         assumed.
+    center : 'center', 'c' id of a global extremum, or array-like
+        The coordinate of the selection's center.
+        Defaults to the 'center', i.e. center of the domain.
+
+        Centering on the min or max of a field is supported by passing a tuple
+        such as ('min', ('gas', 'density')) or ('max', ('gas', 'temperature'). A
+        single string may also be used (e.g. "min_density" or
+        "max_temperature"), though it's not as flexible and does not allow to
+        select an exact field/particle type. With this syntax, the first field
+        matching the provided name is selected.
+        'max' or 'm' can be used as a shortcut for ('max', ('gas', 'density'))
+        'min' can be used as a shortcut for ('min', ('gas', 'density'))
+
+        One can also select an exact point as a 3 element coordinate sequence,
+        e.g. [0.5, 0.5, 0]
+        Units can be specified by passing in *center* as a tuple containing a
+        3-element coordinate sequence and string unit name, e.g. ([0, 0.5, 0.5], "cm"),
+        or by passing in a YTArray. Code units are assumed if unspecified.
     width : tuple or a float.
          Width can have four different formats to support windows with variable
          x and y widths.  They are:
@@ -2141,7 +2209,7 @@ class OffAxisSlicePlot(SlicePlot, PWViewerMPL):
         ds,
         normal,
         fields,
-        center="c",
+        center="center",
         width=None,
         axes_unit=None,
         north_vector=None,
@@ -2166,14 +2234,16 @@ class OffAxisSlicePlot(SlicePlot, PWViewerMPL):
                 f"off-axis slices are not supported for {ds.geometry!r} geometry\n"
                 f"currently supported geometries: {self._supported_geometries!r}"
             )
-
+        # bounds are in cutting plane coordinates, centered on 0:
+        # [xmin, xmax, ymin, ymax]. Can derive width/height back
+        # from these. unit is code_length
         (bounds, center_rot) = get_oblique_window_parameters(normal, center, width, ds)
         if field_parameters is None:
             field_parameters = {}
 
         if isinstance(ds, YTSpatialPlotDataset):
             cutting = ds.all_data()
-            cutting.axis = 4
+            cutting.axis = None
             cutting._inv_mat = ds.parameters["_inv_mat"]
         else:
             cutting = ds.cutting(
@@ -2205,7 +2275,7 @@ class OffAxisSlicePlot(SlicePlot, PWViewerMPL):
 
 class OffAxisProjectionDummyDataSource:
     _type_name = "proj"
-    _key_fields: List[str] = []
+    _key_fields: list[str] = []
 
     def __init__(
         self,
@@ -2221,6 +2291,7 @@ class OffAxisProjectionDummyDataSource:
         le=None,
         re=None,
         north_vector=None,
+        depth=None,
         method="integrate",
         data_source=None,
         *,
@@ -2229,9 +2300,10 @@ class OffAxisProjectionDummyDataSource:
         validate_moment(moment, weight)
         self.center = center
         self.ds = ds
-        self.axis = 4  # always true for oblique data objects
+        self.axis = None  # always true for oblique data objects
         self.normal_vector = normal_vector
         self.width = width
+        self.depth = depth
         if data_source is None:
             self.dd = ds.all_data()
         else:
@@ -2274,16 +2346,24 @@ class OffAxisProjectionPlot(ProjectionPlot, PWViewerMPL):
         The vector normal to the slicing plane.
     fields : string
         The name of the field(s) to be plotted.
-    center : A sequence of floats, a string, or a tuple.
-        The coordinate of the center of the image. If set to 'c', 'center' or
-        left blank, the plot is centered on the middle of the domain. If set to
-        'max' or 'm', the center will be located at the maximum of the
-        ('gas', 'density') field. Centering on the max or min of a specific
-        field is supported by providing a tuple such as ("min","temperature") or
-        ("max","dark_matter_density"). Units can be specified by passing in *center*
-        as a tuple containing a coordinate and string unit name or by passing
-        in a YTArray. If a list or unitless array is supplied, code units are
-        assumed.
+    center : 'center', 'c', id of a global extremum, or array-like
+        The coordinate of the selection's center.
+        Defaults to the 'center', i.e. center of the domain.
+
+        Centering on the min or max of a field is supported by passing a tuple
+        such as ('min', ('gas', 'density')) or ('max', ('gas', 'temperature'). A
+        single string may also be used (e.g. "min_density" or
+        "max_temperature"), though it's not as flexible and does not allow to
+        select an exact field/particle type. With this syntax, the first field
+        matching the provided name is selected.
+        'max' or 'm' can be used as a shortcut for ('max', ('gas', 'density'))
+        'min' can be used as a shortcut for ('min', ('gas', 'density'))
+
+        One can also select an exact point as a 3 element coordinate sequence,
+        e.g. [0.5, 0.5, 0]
+        Units can be specified by passing in *center* as a tuple containing a
+        3-element coordinate sequence and string unit name, e.g. ([0, 0.5, 0.5], "cm"),
+        or by passing in a YTArray. Code units are assumed if unspecified.
     width : tuple or a float.
         Width can have four different formats to support windows with variable
         x and y widths. They are:
@@ -2349,6 +2429,7 @@ class OffAxisProjectionPlot(ProjectionPlot, PWViewerMPL):
         used. Effectively sets a resolution limit to the image if buff_size is
         smaller than the finest gridding.
     """
+
     _plot_type = "OffAxisProjection"
     _frb_generator = OffAxisProjectionFixedResolutionBuffer
     _supported_geometries = ("cartesian", "spectral_cube")
@@ -2358,9 +2439,9 @@ class OffAxisProjectionPlot(ProjectionPlot, PWViewerMPL):
         ds,
         normal,
         fields,
-        center="c",
+        center="center",
         width=None,
-        depth=(1, "1"),
+        depth=None,
         axes_unit=None,
         weight_field=None,
         max_level=None,
@@ -2378,22 +2459,54 @@ class OffAxisProjectionPlot(ProjectionPlot, PWViewerMPL):
     ):
         if ds.geometry not in self._supported_geometries:
             raise NotImplementedError(
-                f"off-axis slices are not supported for {ds.geometry!r} geometry\n"
-                f"currently supported geometries: {self._supported_geometries!r}"
+                "off-axis slices are not supported"
+                f" for {ds.geometry!r} geometry\n"
+                "currently supported geometries:"
+                f" {self._supported_geometries!r}"
             )
-
+        # center_rot normalizes the center to (0,0),
+        # units match bounds
+        # for SPH data, we want to input the original center
+        # the cython backend handles centering to this point and
+        # rotation.
+        # get3bounds gets a depth 0.5 * diagonal + margin in the
+        # depth=None case.
         (bounds, center_rot) = get_oblique_window_parameters(
-            normal, center, width, ds, depth=depth
+            normal,
+            center,
+            width,
+            ds,
+            depth=depth,
+            get3bounds=True,
         )
+        # will probably fail if you try to project an SPH and non-SPH
+        # field in a single call
+        # checks for SPH fields copied from the
+        # _ortho_pixelize method in cartesian_coordinates.py
+
+        ## data_source might be None here
+        ## (OffAxisProjectionDummyDataSource gets used later)
+        if data_source is None:
+            data_source = ds.all_data()
+        field = data_source._determine_fields(fields)[0]
+        finfo = data_source.ds.field_info[field]
+        is_sph_field = finfo.is_sph_field
+        particle_datasets = (ParticleDataset, StreamParticlesDataset)
+
+        if isinstance(data_source.ds, particle_datasets) and is_sph_field:
+            center_use = parse_center_array(center, ds=data_source.ds, axis=None)
+        else:
+            center_use = center_rot
         fields = list(iter_fields(fields))[:]
-        oap_width = ds.arr(
-            (bounds[1] - bounds[0], bounds[3] - bounds[2], bounds[5] - bounds[4])
-        )
+        # oap_width = ds.arr(
+        #    (bounds[1] - bounds[0],
+        #     bounds[3] - bounds[2])
+        # )
         OffAxisProj = OffAxisProjectionDummyDataSource(
-            center_rot,
+            center_use,
             ds,
             normal,
-            oap_width,
+            width,
             fields,
             interpolated,
             weight=weight_field,
@@ -2402,6 +2515,7 @@ class OffAxisProjectionPlot(ProjectionPlot, PWViewerMPL):
             le=le,
             re=re,
             north_vector=north_vector,
+            depth=depth,
             method=method,
             data_source=data_source,
             moment=moment,
@@ -2455,6 +2569,7 @@ class WindowPlotMPL(ImagePlotMPL):
         *,
         norm_handler: NormHandler,
         colorbar_handler: ColorbarHandler,
+        alpha: AlphaT = None,
     ):
         self._projection = mpl_proj
         self._transform = mpl_transform
@@ -2486,7 +2601,7 @@ class WindowPlotMPL(ImagePlotMPL):
             colorbar_handler=colorbar_handler,
         )
 
-        self._init_image(data, extent, aspect)
+        self._init_image(data, extent, aspect, alpha=alpha)
 
     def _create_axes(self, axrect):
         self.axes = self.figure.add_axes(axrect, projection=self._projection)
@@ -2495,7 +2610,7 @@ class WindowPlotMPL(ImagePlotMPL):
 def plot_2d(
     ds,
     fields,
-    center="c",
+    center="center",
     width=None,
     axes_unit=None,
     origin="center-window",
@@ -2504,7 +2619,7 @@ def plot_2d(
     window_size=8.0,
     aspect=None,
     data_source=None,
-):
+) -> AxisAlignedSlicePlot:
     r"""Creates a plot of a 2D dataset
 
     Given a ds object and a field name string, this will return a
@@ -2520,16 +2635,26 @@ def plot_2d(
          simulation output to be plotted.
     fields : string
          The name of the field(s) to be plotted.
-    center : A sequence of floats, a string, or a tuple.
-         The coordinate of the center of the image. If set to 'c', 'center' or
-         left blank, the plot is centered on the middle of the domain. If set to
-         'max' or 'm', the center will be located at the maximum of the
-         ('gas', 'density') field. Centering on the max or min of a specific
-         field is supported by providing a tuple such as ("min","temperature") or
-         ("max","dark_matter_density"). Units can be specified by passing in *center*
-         as a tuple containing a coordinate and string unit name or by passing
-         in a YTArray. If a list or unitless array is supplied, code units are
-         assumed. For plot_2d, this keyword accepts a coordinate in two dimensions.
+    center : 'center', 'c', id of a global extremum, or array-like
+        The coordinate of the selection's center.
+        Defaults to the 'center', i.e. center of the domain.
+
+        Centering on the min or max of a field is supported by passing a tuple
+        such as ('min', ('gas', 'density')) or ('max', ('gas', 'temperature'). A
+        single string may also be used (e.g. "min_density" or
+        "max_temperature"), though it's not as flexible and does not allow to
+        select an exact field/particle type. With this syntax, the first field
+        matching the provided name is selected.
+        'max' or 'm' can be used as a shortcut for ('max', ('gas', 'density'))
+        'min' can be used as a shortcut for ('min', ('gas', 'density'))
+
+        One can also select an exact point as a 3 element coordinate sequence,
+        e.g. [0.5, 0.5, 0]
+        Units can be specified by passing in *center* as a tuple containing a
+        3-element coordinate sequence and string unit name, e.g. ([0, 0.5, 0.5], "cm"),
+        or by passing in a YTArray. Code units are assumed if unspecified.
+
+        plot_2d also accepts a coordinate in two dimensions.
     width : tuple or a float.
          Width can have four different formats to support windows with variable
          x and y widths.  They are:
@@ -2599,16 +2724,25 @@ def plot_2d(
     """
     if ds.dimensionality != 2:
         raise RuntimeError("plot_2d only plots 2D datasets!")
-    if ds.geometry in ["cartesian", "polar", "spectral_cube"]:
+    if (
+        ds.geometry is Geometry.CARTESIAN
+        or ds.geometry is Geometry.POLAR
+        or ds.geometry is Geometry.SPECTRAL_CUBE
+    ):
         axis = "z"
-    elif ds.geometry == "cylindrical":
+    elif ds.geometry is Geometry.CYLINDRICAL:
         axis = "theta"
-    elif ds.geometry == "spherical":
+    elif ds.geometry is Geometry.SPHERICAL:
         axis = "phi"
-    else:
+    elif (
+        ds.geometry is Geometry.GEOGRAPHIC
+        or ds.geometry is Geometry.INTERNAL_GEOGRAPHIC
+    ):
         raise NotImplementedError(
             f"plot_2d does not yet support datasets with {ds.geometry} geometries"
         )
+    else:
+        assert_never(ds.geometry)
     # Part of the convenience of plot_2d is to eliminate the use of the
     # superfluous coordinate, so we do that also with the center argument
     if not isinstance(center, str) and obj_length(center) == 2:
@@ -2616,7 +2750,8 @@ def plot_2d(
         c1_string = isinstance(center[1], str)
         if not c0_string and not c1_string:
             if obj_length(center[0]) == 2 and c1_string:
-                center = ds.arr(center[0], center[1])
+                # turning off type checking locally because center arg is hard to type correctly
+                center = ds.arr(center[0], center[1])  # type: ignore [unreachable]
             elif not isinstance(center, YTArray):
                 center = ds.arr(center, "code_length")
             center.convert_to_units("code_length")

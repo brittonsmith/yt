@@ -101,7 +101,9 @@ class IOHandlerChomboHDF5(BaseIOHandler):
         stop = start + boxsize
         data = lev[self._data_string][start:stop]
         data_no_ghost = data.reshape(shape, order="F")
-        ghost_slice = tuple(slice(g, d + g, None) for g, d in zip(self.ghost, dims))
+        ghost_slice = tuple(
+            slice(g, g + d) for g, d in zip(self.ghost, dims, strict=True)
+        )
         ghost_slice = ghost_slice[0 : self.dim]
         return data_no_ghost[ghost_slice]
 
@@ -146,7 +148,6 @@ class IOHandlerChomboHDF5(BaseIOHandler):
         chunks = list(chunks)
 
         if isinstance(selector, GridSelector):
-
             if not (len(chunks) == len(chunks[0].objs) == 1):
                 raise RuntimeError
 
@@ -166,7 +167,6 @@ class IOHandlerChomboHDF5(BaseIOHandler):
         return rv
 
     def _read_particles(self, grid, name):
-
         field_index = self.particle_field_index[name]
         lev = f"level_{grid.Level}"
 
@@ -266,7 +266,6 @@ class IOHandlerOrion2HDF5(IOHandlerChomboHDF5):
 
     @property
     def particle_field_index(self):
-
         fn = self.ds.fullplotdir[:-4] + "sink"
 
         index = parse_orion_sinks(fn)

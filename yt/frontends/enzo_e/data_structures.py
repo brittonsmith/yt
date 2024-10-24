@@ -111,13 +111,11 @@ class EnzoEGrid(AMRGridPatch):
 
 
 class EnzoEHierarchy(GridIndex):
-
     _strip_path = False
     grid = EnzoEGrid
     _preload_implemented = True
 
     def __init__(self, ds, dataset_type):
-
         self.dataset_type = dataset_type
         self.directory = os.path.dirname(ds.parameter_filename)
         self.index_filename = ds.parameter_filename
@@ -286,11 +284,12 @@ class EnzoEDataset(Dataset):
     Enzo-E-specific output, set at a fixed time.
     """
 
+    _load_requirements = ["h5py", "libconf"]
     refine_by = 2
     _index_class = EnzoEHierarchy
     _field_info_class = EnzoEFieldInfo
     _suffix = ".block_list"
-    particle_types = None
+    particle_types: tuple[str, ...] = ()
     particle_types_raw = None
 
     def __init__(
@@ -409,7 +408,11 @@ class EnzoEDataset(Dataset):
         self.parameters["current_cycle"] = ablock.attrs["cycle"][0]
         gsi = ablock.attrs["enzo_GridStartIndex"]
         gei = ablock.attrs["enzo_GridEndIndex"]
-        self.ghost_zones = gsi[0]
+        assert len(gsi) == len(gei) == 3  # sanity check
+        # Enzo-E technically allows each axis to have different ghost zone
+        # depths (this feature is not really used in practice)
+        self.ghost_zones = gsi
+        assert (self.ghost_zones[self.dimensionality :] == 0).all()  # sanity check
         self.root_block_dimensions = root_blocks
         self.active_grid_dimensions = gei - gsi + 1
         self.grid_dimensions = ablock.attrs["enzo_GridDimension"]
@@ -434,7 +437,7 @@ class EnzoEDataset(Dataset):
         if fp_params is not None:
             # in newer versions of enzo-e, this data is specified in a
             # centralized parameter group called Physics:fluid_props
-            # -  for internal reasons related to backwards compatability,
+            # -  for internal reasons related to backwards compatibility,
             #    treatment of this physics-group is somewhat special (compared
             #    to the cosmology group). The parameters in this group are
             #    honored even if Physics:list does not include "fluid_props"
@@ -476,7 +479,7 @@ class EnzoEDataset(Dataset):
             setdefaultattr(self, "velocity_unit", self.quan(k["uvel"], "cm/s"))
         else:
             p = self.parameters
-            for d, u in zip(("length", "time"), ("cm", "s")):
+            for d, u in [("length", "cm"), ("time", "s")]:
                 val = nested_dict_get(p, ("Units", d), default=1)
                 setdefaultattr(self, f"{d}_unit", self.quan(val, u))
             mass = nested_dict_get(p, ("Units", "mass"))
@@ -499,10 +502,14 @@ class EnzoEDataset(Dataset):
         return self.basename[: -len(self._suffix)]
 
     @classmethod
-    def _is_valid(cls, filename, *args, **kwargs):
+    def _is_valid(cls, filename: str, *args, **kwargs) -> bool:
         ddir = os.path.dirname(filename)
         if not filename.endswith(cls._suffix):
             return False
+
+        if cls._missing_load_requirements():
+            return False
+
         try:
             with open(filename) as f:
                 block, block_file = f.readline().strip().split()

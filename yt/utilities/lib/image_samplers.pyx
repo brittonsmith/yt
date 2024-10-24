@@ -1,8 +1,7 @@
 # distutils: include_dirs = LIB_DIR
 # distutils: extra_compile_args = CPP14_FLAG OMP_ARGS
 # distutils: extra_link_args = CPP14_FLAG OMP_ARGS
-# distutils: libraries = STD_LIBS
-# distutils: sources = FIXED_INTERP
+# distutils: libraries = STD_LIBS FIXED_INTERP
 # distutils: language = c++
 """
 Image sampler definitions
@@ -36,9 +35,7 @@ from ._octree_raytracing cimport RayInfo, _OctreeRayTracing
 
 
 cdef extern from "platform_dep.h":
-    long int lrint(double x) nogil
-
-DEF Nch = 4
+    long int lrint(double x) noexcept nogil
 
 from cython.parallel import parallel, prange
 
@@ -313,7 +310,7 @@ cdef class ImageSampler:
                  np.float64_t enter_t,
                  np.float64_t exit_t,
                  int index[3],
-                 void *data) nogil:
+                 void *data) noexcept nogil:
         return
 
     def ensure_code_unit_params(self, params):
@@ -337,7 +334,7 @@ cdef class ProjectionSampler(ImageSampler):
                  np.float64_t enter_t,
                  np.float64_t exit_t,
                  int index[3],
-                 void *data) nogil:
+                 void *data) noexcept nogil:
         cdef ImageAccumulator *im = <ImageAccumulator *> data
         cdef int i
         cdef np.float64_t dl = (exit_t - enter_t)
@@ -379,7 +376,7 @@ cdef class InterpolatedProjectionSampler(ImageSampler):
                      np.float64_t enter_t,
                      np.float64_t exit_t,
                      int index[3],
-                     void *data) nogil:
+                     void *data) noexcept nogil:
         cdef ImageAccumulator *im = <ImageAccumulator *> data
         cdef VolumeRenderAccumulator *vri = <VolumeRenderAccumulator *> \
                 im.supp_data
@@ -460,7 +457,7 @@ cdef class VolumeRenderSampler(ImageSampler):
                      np.float64_t enter_t,
                      np.float64_t exit_t,
                      int index[3],
-                     void *data) nogil:
+                     void *data) noexcept nogil:
         cdef ImageAccumulator *im = <ImageAccumulator *> data
         cdef VolumeRenderAccumulator *vri = <VolumeRenderAccumulator *> \
                 im.supp_data
@@ -561,7 +558,7 @@ cdef class LightSourceRenderSampler(ImageSampler):
                      np.float64_t enter_t,
                      np.float64_t exit_t,
                      int index[3],
-                     void *data) nogil:
+                     void *data) noexcept nogil:
         cdef ImageAccumulator *im = <ImageAccumulator *> data
         cdef VolumeRenderAccumulator *vri = <VolumeRenderAccumulator *> \
                 im.supp_data
