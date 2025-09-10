@@ -122,23 +122,23 @@ def test_ptype():
 @pytest.mark.parametrize("ptype", [None, "io"])
 def test_default_field_tuple(particle_trajectories_test_dataset, ptype):
     ds = particle_trajectories_test_dataset[0]
-    ids = ds.all_data()[("all", "particle_index")]
+    ids = ds.all_data()["all", "particle_index"]
     trajs = particle_trajectories_test_dataset.particle_trajectories(
         ids, ptype=ptype, suppress_logging=True
     )
     ptype = ptype if ptype else "all"  # ptype defaults to "all"
     for k in trajs.field_data.keys():
         assert isinstance(k, tuple), f"Expected key to be tuple, received {type(k)}"
-        assert (
-            k[0] == ptype
-        ), f"Default field type ({k[0]}) does not match expected ({ptype})"
+        assert k[0] == ptype, (
+            f"Default field type ({k[0]}) does not match expected ({ptype})"
+        )
         assert ("all", k[1]) in pfields, f"Unexpected field: {k[1]}"
 
 
 @pytest.mark.parametrize("ptype", [None, "io"])
 def test_time_and_index(particle_trajectories_test_dataset, ptype):
     ds = particle_trajectories_test_dataset[0]
-    ids = ds.all_data()[("all", "particle_index")]
+    ids = ds.all_data()["all", "particle_index"]
     trajs = particle_trajectories_test_dataset.particle_trajectories(
         ids, ptype=ptype, suppress_logging=True
     )

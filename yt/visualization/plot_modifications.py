@@ -9,6 +9,7 @@ from typing import Any, TypeGuard
 
 import matplotlib
 import numpy as np
+import rlic
 from unyt import unyt_quantity
 
 from yt._maintenance.deprecation import issue_deprecation_warning
@@ -30,7 +31,6 @@ from yt.utilities.exceptions import (
     YTUnsupportedPlotCallback,
 )
 from yt.utilities.lib.geometry_utils import triangle_plane_intersect
-from yt.utilities.lib.line_integral_convolution import line_integral_convolution_2d
 from yt.utilities.lib.mesh_triangulation import triangulate_indices
 from yt.utilities.lib.pixelization_routines import (
     pixelize_cartesian,
@@ -463,21 +463,22 @@ class VelocityCallback(PlotCallback):
         # Instantiation of these is cheap
         geometry: Geometry = plot.data.ds.geometry
         if plot._type_name == "CuttingPlane":
-            if geometry is Geometry.CARTESIAN:
-                pass
-            elif (
-                geometry is Geometry.POLAR
-                or geometry is Geometry.CYLINDRICAL
-                or geometry is Geometry.SPHERICAL
-                or geometry is Geometry.GEOGRAPHIC
-                or geometry is Geometry.INTERNAL_GEOGRAPHIC
-                or geometry is Geometry.SPECTRAL_CUBE
-            ):
-                raise NotImplementedError(
-                    f"annotate_velocity is not supported for cutting plane for {geometry=}"
-                )
-            else:
-                assert_never(geometry)
+            match geometry:
+                case Geometry.CARTESIAN:
+                    pass
+                case (
+                    Geometry.POLAR
+                    | Geometry.CYLINDRICAL
+                    | Geometry.SPHERICAL
+                    | Geometry.GEOGRAPHIC
+                    | Geometry.INTERNAL_GEOGRAPHIC
+                    | Geometry.SPECTRAL_CUBE
+                ):
+                    raise NotImplementedError(
+                        f"annotate_velocity is not supported for cutting plane for {geometry=}"
+                    )
+                case _:
+                    assert_never(geometry)
         qcb: BaseQuiverCallback
         if plot._type_name == "CuttingPlane":
             qcb = CuttingQuiverCallback(
@@ -501,39 +502,40 @@ class VelocityCallback(PlotCallback):
             else:
                 bv_x = bv_y = 0
 
-            if geometry is Geometry.POLAR or geometry is Geometry.CYLINDRICAL:
-                if axis_names[plot.data.axis] == "z":
-                    # polar_z and cyl_z is aligned with cartesian_z
-                    # should convert r-theta plane to x-y plane
-                    xv = (ftype, "velocity_cartesian_x")
-                    yv = (ftype, "velocity_cartesian_y")
-                else:
+            match geometry:
+                case Geometry.POLAR | Geometry.CYLINDRICAL:
+                    if axis_names[plot.data.axis] == "z":
+                        # polar_z and cyl_z is aligned with cartesian_z
+                        # should convert r-theta plane to x-y plane
+                        xv = (ftype, "velocity_cartesian_x")
+                        yv = (ftype, "velocity_cartesian_y")
+                    else:
+                        xv = (ftype, f"velocity_{axis_names[xax]}")
+                        yv = (ftype, f"velocity_{axis_names[yax]}")
+                case Geometry.SPHERICAL:
+                    if axis_names[plot.data.axis] == "phi":
+                        xv = (ftype, "velocity_cylindrical_radius")
+                        yv = (ftype, "velocity_cylindrical_z")
+                    elif axis_names[plot.data.axis] == "theta":
+                        xv = (ftype, "velocity_conic_x")
+                        yv = (ftype, "velocity_conic_y")
+                    else:
+                        raise NotImplementedError(
+                            f"annotate_velocity is missing support for normal={axis_names[plot.data.axis]!r}"
+                        )
+                case Geometry.CARTESIAN:
                     xv = (ftype, f"velocity_{axis_names[xax]}")
                     yv = (ftype, f"velocity_{axis_names[yax]}")
-            elif geometry is Geometry.SPHERICAL:
-                if axis_names[plot.data.axis] == "phi":
-                    xv = (ftype, "velocity_cylindrical_radius")
-                    yv = (ftype, "velocity_cylindrical_z")
-                elif axis_names[plot.data.axis] == "theta":
-                    xv = (ftype, "velocity_conic_x")
-                    yv = (ftype, "velocity_conic_y")
-                else:
+                case (
+                    Geometry.GEOGRAPHIC
+                    | Geometry.INTERNAL_GEOGRAPHIC
+                    | Geometry.SPECTRAL_CUBE
+                ):
                     raise NotImplementedError(
-                        f"annotate_velocity is missing support for normal={axis_names[plot.data.axis]!r}"
+                        f"annotate_velocity is not supported for {geometry=}"
                     )
-            elif geometry is Geometry.CARTESIAN:
-                xv = (ftype, f"velocity_{axis_names[xax]}")
-                yv = (ftype, f"velocity_{axis_names[yax]}")
-            elif (
-                geometry is Geometry.GEOGRAPHIC
-                or geometry is Geometry.INTERNAL_GEOGRAPHIC
-                or geometry is Geometry.SPECTRAL_CUBE
-            ):
-                raise NotImplementedError(
-                    f"annotate_velocity is not supported for {geometry=}"
-                )
-            else:
-                assert_never(geometry)
+                case _:
+                    assert_never(geometry)
 
             # determine the full fields including field type
             xv = plot.data._determine_fields(xv)[0]
@@ -606,21 +608,22 @@ class MagFieldCallback(PlotCallback):
         geometry: Geometry = plot.data.ds.geometry
         qcb: BaseQuiverCallback
         if plot._type_name == "CuttingPlane":
-            if geometry is Geometry.CARTESIAN:
-                pass
-            elif (
-                geometry is Geometry.POLAR
-                or geometry is Geometry.CYLINDRICAL
-                or geometry is Geometry.SPHERICAL
-                or geometry is Geometry.GEOGRAPHIC
-                or geometry is Geometry.INTERNAL_GEOGRAPHIC
-                or geometry is Geometry.SPECTRAL_CUBE
-            ):
-                raise NotImplementedError(
-                    f"annotate_magnetic_field is not supported for cutting plane for {geometry=}"
-                )
-            else:
-                assert_never(geometry)
+            match geometry:
+                case Geometry.CARTESIAN:
+                    pass
+                case (
+                    Geometry.POLAR
+                    | Geometry.CYLINDRICAL
+                    | Geometry.SPHERICAL
+                    | Geometry.GEOGRAPHIC
+                    | Geometry.INTERNAL_GEOGRAPHIC
+                    | Geometry.SPECTRAL_CUBE
+                ):
+                    raise NotImplementedError(
+                        f"annotate_magnetic_field is not supported for cutting plane for {geometry=}"
+                    )
+                case _:
+                    assert_never(geometry)
             qcb = CuttingQuiverCallback(
                 (ftype, "cutting_plane_magnetic_field_x"),
                 (ftype, "cutting_plane_magnetic_field_y"),
@@ -635,39 +638,40 @@ class MagFieldCallback(PlotCallback):
             yax = plot.data.ds.coordinates.y_axis[plot.data.axis]
             axis_names = plot.data.ds.coordinates.axis_name
 
-            if geometry is Geometry.POLAR or geometry is Geometry.CYLINDRICAL:
-                if axis_names[plot.data.axis] == "z":
-                    # polar_z and cyl_z is aligned with cartesian_z
-                    # should convert r-theta plane to x-y plane
-                    xv = (ftype, "magnetic_field_cartesian_x")
-                    yv = (ftype, "magnetic_field_cartesian_y")
-                else:
+            match geometry:
+                case Geometry.POLAR | Geometry.CYLINDRICAL:
+                    if axis_names[plot.data.axis] == "z":
+                        # polar_z and cyl_z is aligned with cartesian_z
+                        # should convert r-theta plane to x-y plane
+                        xv = (ftype, "magnetic_field_cartesian_x")
+                        yv = (ftype, "magnetic_field_cartesian_y")
+                    else:
+                        xv = (ftype, f"magnetic_field_{axis_names[xax]}")
+                        yv = (ftype, f"magnetic_field_{axis_names[yax]}")
+                case Geometry.SPHERICAL:
+                    if axis_names[plot.data.axis] == "phi":
+                        xv = (ftype, "magnetic_field_cylindrical_radius")
+                        yv = (ftype, "magnetic_field_cylindrical_z")
+                    elif axis_names[plot.data.axis] == "theta":
+                        xv = (ftype, "magnetic_field_conic_x")
+                        yv = (ftype, "magnetic_field_conic_y")
+                    else:
+                        raise NotImplementedError(
+                            f"annotate_magnetic_field is missing support for normal={axis_names[plot.data.axis]!r}"
+                        )
+                case Geometry.CARTESIAN:
                     xv = (ftype, f"magnetic_field_{axis_names[xax]}")
                     yv = (ftype, f"magnetic_field_{axis_names[yax]}")
-            elif geometry is Geometry.SPHERICAL:
-                if axis_names[plot.data.axis] == "phi":
-                    xv = (ftype, "magnetic_field_cylindrical_radius")
-                    yv = (ftype, "magnetic_field_cylindrical_z")
-                elif axis_names[plot.data.axis] == "theta":
-                    xv = (ftype, "magnetic_field_conic_x")
-                    yv = (ftype, "magnetic_field_conic_y")
-                else:
+                case (
+                    Geometry.GEOGRAPHIC
+                    | Geometry.INTERNAL_GEOGRAPHIC
+                    | Geometry.SPECTRAL_CUBE
+                ):
                     raise NotImplementedError(
-                        f"annotate_magnetic_field is missing support for normal={axis_names[plot.data.axis]!r}"
+                        f"annotate_magnetic_field is not supported for {geometry=}"
                     )
-            elif geometry is Geometry.CARTESIAN:
-                xv = (ftype, f"magnetic_field_{axis_names[xax]}")
-                yv = (ftype, f"magnetic_field_{axis_names[yax]}")
-            elif (
-                geometry is Geometry.GEOGRAPHIC
-                or geometry is Geometry.INTERNAL_GEOGRAPHIC
-                or geometry is Geometry.SPECTRAL_CUBE
-            ):
-                raise NotImplementedError(
-                    f"annotate_magnetic_field is not supported for {geometry=}"
-                )
-            else:
-                assert_never(geometry)
+                case _:
+                    assert_never(geometry)
 
             qcb = QuiverCallback(
                 xv,
@@ -919,7 +923,7 @@ class ContourCallback(PlotCallback):
     Add contours in *field* to the plot. *levels* governs the number of
     contours generated, *factor* governs the number of points used in the
     interpolation, *take_log* governs how it is contoured and *clim* gives
-    the (upper, lower) limits for contouring.  An alternate data source can be
+    the (lower, upper) limits for contouring.  An alternate data source can be
     specified with *data_source*, but by default the plot's data source will be
     queried.
     """
@@ -995,8 +999,8 @@ class ContourCallback(PlotCallback):
 
         if plot._type_name in ["CuttingPlane", "Projection", "Slice"]:
             if plot._type_name == "CuttingPlane":
-                x = data["px"] * dx
-                y = data["py"] * dy
+                x = (data["px"] * dx).to("1")
+                y = (data["py"] * dy).to("1")
                 z = data[self.field]
             elif plot._type_name in ["Projection", "Slice"]:
                 # Makes a copy of the position fields "px" and "py" and adds the
@@ -1024,8 +1028,10 @@ class ContourCallback(PlotCallback):
                 wI = AllX & AllY
 
                 # This converts XShifted and YShifted into plot coordinates
-                x = ((XShifted[wI] - x0) * dx).ndarray_view() + xx0
-                y = ((YShifted[wI] - y0) * dy).ndarray_view() + yy0
+                # Note: we force conversion into "1" to prevent issues in case
+                # one of the length has some dimensionless factor (Mpc/h)
+                x = ((XShifted[wI] - x0) * dx).to("1").ndarray_view() + xx0
+                y = ((YShifted[wI] - y0) * dy).to("1").ndarray_view() + yy0
                 z = data[self.field][wI]
 
             # Both the input and output from the triangulator are in plot
@@ -1130,8 +1136,8 @@ class GridBoundaryCallback(PlotCallback):
 
         x0, x1, y0, y1 = self._physical_bounds(plot)
         xx0, xx1, yy0, yy1 = self._plot_bounds(plot)
-        (dx, dy) = self._pixel_scale(plot)
-        (ypix, xpix) = plot.raw_image_shape
+        dx, dy = self._pixel_scale(plot)
+        ypix, xpix = plot.raw_image_shape
         ax = plot.data.axis
         px_index = plot.data.ds.coordinates.x_axis[ax]
         py_index = plot.data.ds.coordinates.y_axis[ax]
@@ -1165,10 +1171,17 @@ class GridBoundaryCallback(PlotCallback):
         for px_off, py_off in zip(pxs.ravel(), pys.ravel(), strict=True):
             pxo = px_off * DW[px_index]
             pyo = py_off * DW[py_index]
-            left_edge_x = np.array((GLE[:, px_index] + pxo - x0) * dx) + xx0
-            left_edge_y = np.array((GLE[:, py_index] + pyo - y0) * dy) + yy0
-            right_edge_x = np.array((GRE[:, px_index] + pxo - x0) * dx) + xx0
-            right_edge_y = np.array((GRE[:, py_index] + pyo - y0) * dy) + yy0
+            # Note: [dx] = 1/length, [GLE] = length
+            # we force conversion into "1" to prevent issues if e.g. GLE is in Mpc/h
+            # where dx * GLE would have units 1/h rather than being truly dimensionless
+            left_edge_x = np.array((((GLE[:, px_index] + pxo - x0) * dx) + xx0).to("1"))
+            left_edge_y = np.array((((GLE[:, py_index] + pyo - y0) * dy) + yy0).to("1"))
+            right_edge_x = np.array(
+                (((GRE[:, px_index] + pxo - x0) * dx) + xx0).to("1")
+            )
+            right_edge_y = np.array(
+                (((GRE[:, py_index] + pyo - y0) * dy) + yy0).to("1")
+            )
             xwidth = xpix * (right_edge_x - left_edge_x) / (xx1 - xx0)
             ywidth = ypix * (right_edge_y - left_edge_y) / (yy1 - yy0)
             visible = np.logical_and(
@@ -1244,7 +1257,7 @@ class GridBoundaryCallback(PlotCallback):
                             "'upper left', and 'upper right'."
                         )
                     xi, yi = self._sanitize_xy_order(plot, x[i], y[i])
-                    plot._axes.text(xi, yi, "%d" % block_ids[n], clip_on=True)
+                    plot._axes.text(xi, yi, str(block_ids[n]), clip_on=True)
 
 
 # when type-checking with MPL >= 3.8, use
@@ -2071,12 +2084,20 @@ class SphereCallback(PlotCallback):
                 units = "code_length"
             self.radius = self.radius.to(units)
 
+        if not hasattr(self.radius, "units"):
+            self.radius = plot.data.ds.quan(self.radius, "code_length")
+
+        if not hasattr(self.center, "units"):
+            self.center = plot.data.ds.arr(self.center, "code_length")
+
         # This assures the radius has the appropriate size in
         # the different coordinate systems, since one cannot simply
         # apply a different transform for a length in the same way
         # you can for a coordinate.
         if self.coord_system == "data" or self.coord_system == "plot":
-            scaled_radius = self.radius * self._pixel_scale(plot)[0]
+            # Note: we force conversion into "1" to prevent issues in case
+            # one of the length has some dimensionless factor (Mpc/h)
+            scaled_radius = (self.radius * self._pixel_scale(plot)[0]).to("1")
         else:
             scaled_radius = self.radius / (plot.xlim[1] - plot.xlim[0])
 
@@ -3217,10 +3238,10 @@ class LineIntegralConvolutionCallback(PlotCallback):
         field_x,
         field_y,
         texture=None,
-        kernellen=50.0,
+        kernellen=50,
         lim=(0.5, 0.6),
         cmap="binary",
-        alpha=0.8,
+        alpha=0.5,
         const_alpha=False,
     ):
         self.field_x = field_x
@@ -3249,28 +3270,17 @@ class LineIntegralConvolutionCallback(PlotCallback):
             plot.data.axis, plot.data, self.field_y, bounds, (nx, ny)
         )
 
-        vectors = np.concatenate((pixX[..., np.newaxis], pixY[..., np.newaxis]), axis=2)
-
         if self.texture is None:
-            prng = np.random.RandomState(0x4D3D3D3)
-            self.texture = prng.random_sample((nx, ny))
-        elif self.texture.shape != (nx, ny):
-            raise ValueError(
-                "'texture' must have the same shape "
-                "with that of output image (%d, %d)" % (nx, ny)
-            )
+            prng = np.random.default_rng(0x4D3D3D3)
+            self.texture = prng.random((nx, ny))
 
         kernel = np.sin(
             np.arange(self.kernellen, dtype="float64") * np.pi / self.kernellen
         )
 
-        lic_data = line_integral_convolution_2d(vectors, self.texture, kernel)
+        lic_data = rlic.convolve(self.texture, pixX, pixY, kernel=kernel)
         lic_data = lic_data / lic_data.max()
         lic_data_clip = np.clip(lic_data, self.lim[0], self.lim[1])
-
-        mask = ~(np.isfinite(pixX) & np.isfinite(pixY))
-        lic_data[mask] = np.nan
-        lic_data_clip[mask] = np.nan
 
         if plot._swap_axes:
             lic_data_clip = lic_data_clip.transpose()
@@ -3390,6 +3400,12 @@ class CellEdgesCallback(PlotCallback):
         extent = self._plot_bounds(plot)
         if plot._swap_axes:
             im_buffer = im_buffer.transpose((1, 0, 2))
+            # note: when using imshow, the extent keyword argument has to be the
+            # swapped extents, so the extent is swapped here (rather than
+            # calling self._set_plot_limits).
+            # https://github.com/yt-project/yt/issues/5094
+            extent = _swap_axes_extents(extent)
+
         plot._axes.imshow(
             im_buffer,
             origin="lower",
@@ -3397,4 +3413,3 @@ class CellEdgesCallback(PlotCallback):
             extent=extent,
             alpha=self.alpha,
         )
-        self._set_plot_limits(plot, extent)

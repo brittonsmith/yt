@@ -196,9 +196,7 @@ class BoxLibParticleHeader:
         self.known_int_fields = self.known_int_fields[0 : self.num_int_base]
 
         # these are extra integer fields
-        extra_int_fields = [
-            "particle_int_comp%d" % i for i in range(self.num_int_extra)
-        ]
+        extra_int_fields = [f"particle_int_comp{i}" for i in range(self.num_int_extra)]
         self.known_int_fields.extend(
             [(self.particle_type, field) for field in extra_int_fields]
         )
@@ -216,7 +214,7 @@ class BoxLibParticleHeader:
             assert len(extra_field_names) == self.num_real_extra
         else:
             extra_field_names = [
-                "particle_real_comp%d" % i for i in range(self.num_real_extra)
+                f"particle_real_comp{i}" for i in range(self.num_real_extra)
             ]
 
         self.known_real_fields.extend(
@@ -370,23 +368,19 @@ class BoxlibHierarchy(GridIndex):
                 dx[i].append(DRE[2] - DLE[2])
         self.level_dds = np.array(dx, dtype="float64")
         next(header_file)
-        if self.ds.geometry == "cartesian":
-            default_ybounds = (0.0, 1.0)
-            default_zbounds = (0.0, 1.0)
-        elif self.ds.geometry == "cylindrical":
-            self.level_dds[:, 2] = 2 * np.pi
-            default_ybounds = (0.0, 1.0)
-            default_zbounds = (0.0, 2 * np.pi)
-        elif self.ds.geometry == "spherical":
-            # BoxLib only supports 1D spherical, so ensure
-            # the other dimensions have the right extent.
-            self.level_dds[:, 1] = np.pi
-            self.level_dds[:, 2] = 2 * np.pi
-            default_ybounds = (0.0, np.pi)
-            default_zbounds = (0.0, 2 * np.pi)
-        else:
-            header_file.close()
-            raise RuntimeError("Unknown BoxLib coordinate system.")
+        match self.ds.geometry:
+            case Geometry.CARTESIAN:
+                default_ybounds = (0.0, 1.0)
+                default_zbounds = (0.0, 1.0)
+            case Geometry.CYLINDRICAL:
+                default_ybounds = (0.0, 1.0)
+                default_zbounds = (0.0, 2 * np.pi)
+            case Geometry.SPHERICAL:
+                default_ybounds = (0.0, np.pi)
+                default_zbounds = (0.0, 2 * np.pi)
+            case _:
+                header_file.close()
+                raise RuntimeError("Unknown BoxLib coordinate system.")
         if int(next(header_file)) != 0:
             header_file.close()
             raise RuntimeError("INTERNAL ERROR! This should be a zero.")
@@ -904,9 +898,15 @@ class BoxlibDataset(Dataset):
         else:
             self.geometry = Geometry(geom_str)
 
-        if self.geometry == "cylindrical":
+        if self.geometry is Geometry.CYLINDRICAL:
             dre = self.domain_right_edge.copy()
             dre[2] = 2.0 * np.pi
+            self.domain_right_edge = dre
+        if self.geometry is Geometry.SPHERICAL and self.dimensionality < 3:
+            dre = self.domain_right_edge.copy()
+            dre[2] = 2.0 * np.pi
+            if self.dimensionality < 2:
+                dre[1] = np.pi
             self.domain_right_edge = dre
 
         header_file.close()
@@ -1477,7 +1477,7 @@ class WarpXHeader:
                 if len(line) == 1:
                     line = f.readline()
                     continue
-                self.data["species_%d" % i] = [float(val) for val in line]
+                self.data[f"species_{i}"] = [float(val) for val in line]
                 i = i + 1
                 line = f.readline()
 
@@ -1496,8 +1496,8 @@ class WarpXHierarchy(BoxlibHierarchy):
         for key, val in self.warpx_header.data.items():
             if key.startswith("species_"):
                 i = int(key.split("_")[-1])
-                charge_name = "particle%.1d_charge" % i
-                mass_name = "particle%.1d_mass" % i
+                charge_name = f"particle{i}_charge"
+                mass_name = f"particle{i}_mass"
                 self.parameters[charge_name] = val[0]
                 self.parameters[mass_name] = val[1]
 

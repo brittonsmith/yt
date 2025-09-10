@@ -171,6 +171,7 @@ class Dataset(abc.ABC):
     field_units: dict[AnyFieldKey, Unit] | None = None
     derived_field_list = requires_index("derived_field_list")
     fields = requires_index("fields")
+    _field_info = None
     conversion_factors: dict[str, float] | None = None
     # _instantiated represents an instantiation time (since Epoch)
     # the default is a place holder sentinel, falsy value
@@ -349,7 +350,7 @@ class Dataset(abc.ABC):
     @cached_property
     def unique_identifier(self) -> str:
         retv = int(os.stat(self.parameter_filename)[ST_CTIME])
-        name_as_bytes = bytearray(map(ord, self.parameter_filename))
+        name_as_bytes = bytearray(self.parameter_filename.encode("utf-8"))
         retv += fnv_hash(name_as_bytes)
         return str(retv)
 
@@ -654,7 +655,24 @@ class Dataset(abc.ABC):
     def field_list(self):
         return self.index.field_list
 
+    @property
+    def field_info(self):
+        if self._field_info is None:
+            self.index
+        return self._field_info
+
+    @field_info.setter
+    def field_info(self, value):
+        self._field_info = value
+
     def create_field_info(self):
+        # create_field_info will be called at the end of instantiating
+        # the index object. This will trigger index creation, which will
+        # call this function again.
+        if self._instantiated_index is None:
+            self.index
+            return
+
         self.field_dependencies = {}
         self.derived_field_list = []
         self.filtered_particle_types = []
@@ -798,28 +816,29 @@ class Dataset(abc.ABC):
                 f"Got {self.geometry=} with type {type(self.geometry)}"
             )
 
-        if self.geometry is Geometry.CARTESIAN:
-            cls = CartesianCoordinateHandler
-        elif self.geometry is Geometry.CYLINDRICAL:
-            cls = CylindricalCoordinateHandler
-        elif self.geometry is Geometry.POLAR:
-            cls = PolarCoordinateHandler
-        elif self.geometry is Geometry.SPHERICAL:
-            cls = SphericalCoordinateHandler
-            # It shouldn't be required to reset self.no_cgs_equiv_length
-            # to the default value (False) here, but it's still necessary
-            # see https://github.com/yt-project/yt/pull/3618
-            self.no_cgs_equiv_length = False
-        elif self.geometry is Geometry.GEOGRAPHIC:
-            cls = GeographicCoordinateHandler
-            self.no_cgs_equiv_length = True
-        elif self.geometry is Geometry.INTERNAL_GEOGRAPHIC:
-            cls = InternalGeographicCoordinateHandler
-            self.no_cgs_equiv_length = True
-        elif self.geometry is Geometry.SPECTRAL_CUBE:
-            cls = SpectralCubeCoordinateHandler
-        else:
-            assert_never(self.geometry)
+        match self.geometry:
+            case Geometry.CARTESIAN:
+                cls = CartesianCoordinateHandler
+            case Geometry.CYLINDRICAL:
+                cls = CylindricalCoordinateHandler
+            case Geometry.POLAR:
+                cls = PolarCoordinateHandler
+            case Geometry.SPHERICAL:
+                cls = SphericalCoordinateHandler
+                # It shouldn't be required to reset self.no_cgs_equiv_length
+                # to the default value (False) here, but it's still necessary
+                # see https://github.com/yt-project/yt/pull/3618
+                self.no_cgs_equiv_length = False
+            case Geometry.GEOGRAPHIC:
+                cls = GeographicCoordinateHandler
+                self.no_cgs_equiv_length = True
+            case Geometry.INTERNAL_GEOGRAPHIC:
+                cls = InternalGeographicCoordinateHandler
+                self.no_cgs_equiv_length = True
+            case Geometry.SPECTRAL_CUBE:
+                cls = SpectralCubeCoordinateHandler
+            case _:
+                assert_never(self.geometry)
 
         self.coordinates = cls(self, ordering=axis_order)
 
@@ -1393,7 +1412,7 @@ class Dataset(abc.ABC):
                         new_unit,
                         my_u.base_value / (1 + self.current_redshift),
                         dimensions.length,
-                        f"\\rm{{{my_unit}}}/(1+z)",
+                        f"\\rm{{c{my_unit}}}",
                         prefixable=True,
                     )
                 self.unit_registry.modify("a", 1 / (1 + self.current_redshift))
@@ -1948,9 +1967,9 @@ class Dataset(abc.ABC):
         ...     ("gas", "density_gradient_magnitude"),
         ... ]
 
-        Note that the above example assumes ds.geometry == 'cartesian'. In general,
-        the function will create gradient components along the axes of the dataset
-        coordinate system.
+        Note that the above example assumes ds.geometry is Geometry.CARTESIAN.
+        In general, the function will create gradient components along the axes
+        of the dataset coordinate system.
         For instance, with cylindrical data, one gets 'density_gradient_<r,theta,z>'
 
         """

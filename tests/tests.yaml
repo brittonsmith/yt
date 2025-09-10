@@ -183,6 +183,7 @@ other_tests:
      - "--ignore=test_outputs_pytest"
      - "--ignore-file=test_add_field\\.py"
      - "--ignore-file=test_ambiguous_fields\\.py"
+     - "--ignore-file=test_base_plot_types\\.py"
      - "--ignore-file=test_callable_grids\\.py"
      - "--ignore-file=test_callbacks_geographic\\.py"
      - "--ignore-file=test_commons\\.py"
@@ -229,5 +230,6 @@ other_tests:
      - "--exclude-test=yt.frontends.stream.tests.test_stream_particles.test_stream_non_cartesian_particles"
      - "--ignore-file=test_offaxisprojection_pytestonly\\.py"
      - "--ignore-file=test_sph_pixelization_pytestonly\\.py"
+     - "--ignore-file=test_cf_radial_pytest\\.py"
   cookbook:
      - 'doc/source/cookbook/tests/test_cookbook.py'

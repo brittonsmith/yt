@@ -1,5 +1,6 @@
 --ignore-file=test_add_field\.py
 --ignore-file=test_ambiguous_fields\.py
+--ignore-file=test_base_plot_types\.py
 --ignore-file=test_callable_grids\.py
 --ignore-file=test_callbacks_geographic\.py
 --ignore-file=test_commons\.py
@@ -48,3 +49,5 @@
 --ignore-file=test_offaxisprojection_pytestonly\.py
 --ignore-file=test_sph_pixelization_pytestonly\.py
 --ignore-file=test_time_series\.py
+--ignore-file=test_cf_radial_pytest\.py
+--ignore-file=test_data_containers\.py

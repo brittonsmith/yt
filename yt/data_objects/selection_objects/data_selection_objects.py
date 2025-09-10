@@ -4,6 +4,7 @@ import sys
 import uuid
 from collections import defaultdict
 from contextlib import contextmanager
+from typing import Literal
 
 import numpy as np
 from more_itertools import always_iterable
@@ -17,7 +18,7 @@ from yt.data_objects.field_data import YTFieldData
 from yt.fields.field_exceptions import NeedsGridType
 from yt.funcs import fix_axis, is_sequence, iter_fields, validate_width_tuple
 from yt.geometry.api import Geometry
-from yt.geometry.selection_routines import compose_selector
+from yt.geometry.selection_routines import SelectorObject, compose_selector
 from yt.units import YTArray
 from yt.utilities.exceptions import (
     GenerationInProgress,
@@ -41,15 +42,14 @@ else:
 
 
 class YTSelectionContainer(YTDataContainer, ParallelAnalysisInterface, abc.ABC):
-    _locked = False
-    _sort_by = None
-    _selector = None
-    _current_chunk = None
-    _data_source = None
+    _locked: bool = False
+    _selector: SelectorObject | None = None
+    _current_chunk: YTDataContainer | None = None
+    _data_source: YTDataContainer | None = None
     _dimensionality: int
-    _max_level = None
-    _min_level = None
-    _derived_quantity_chunking = "io"
+    _max_level: int | None = None
+    _min_level: int | None = None
+    _derived_quantity_chunking: Literal["io", "all"] = "io"
 
     def __init__(self, ds, field_parameters, data_source=None):
         ParallelAnalysisInterface.__init__(self)
@@ -66,8 +66,8 @@ class YTSelectionContainer(YTDataContainer, ParallelAnalysisInterface, abc.ABC):
             if data_source._dimensionality < self._dimensionality:
                 raise RuntimeError(
                     "Attempted to construct a DataContainer with a data_source "
-                    "of lower dimensionality (%u vs %u)"
-                    % (data_source._dimensionality, self._dimensionality)
+                    "of lower dimensionality "
+                    f"({data_source._dimensionality} vs {self._dimensionality})"
                 )
             self.field_parameters.update(data_source.field_parameters)
         self.quantities = DerivedQuantityCollection(self)
@@ -221,6 +221,39 @@ class YTSelectionContainer(YTDataContainer, ParallelAnalysisInterface, abc.ABC):
         for field in list(self.field_data.keys()):
             if field not in ofields:
                 self.field_data.pop(field)
+
+    def _get_bbox(self):
+        """
+        Return the bounding box for this data container.
+        This generic version will return the bounds of the entire domain.
+        """
+        return self.ds.domain_left_edge, self.ds.domain_right_edge
+
+    def get_bbox(self) -> tuple[unyt_array, unyt_array]:
+        """
+        Return the bounding box for this data container.
+        """
+        match self.ds.geometry:
+            case Geometry.CARTESIAN if self._data_source is None:
+                le, re = self._get_bbox()
+                return (le.to("code_length"), re.to("code_length"))
+            case Geometry.CARTESIAN:
+                # mypy does not understand that here, _data_source cannot be None
+                return self._data_source.get_bbox()  # type: ignore [union-attr]
+            case (
+                Geometry.CYLINDRICAL
+                | Geometry.POLAR
+                | Geometry.SPHERICAL
+                | Geometry.GEOGRAPHIC
+                | Geometry.INTERNAL_GEOGRAPHIC
+                | Geometry.SPECTRAL_CUBE
+            ):
+                geometry = self.ds.geometry
+                raise NotImplementedError(
+                    f"get_bbox is currently not implemented for {geometry=}!"
+                )
+            case _:
+                assert_never(self.ds.geometry)
 
     def _generate_fields(self, fields_to_generate):
         index = 0
@@ -609,23 +642,22 @@ class YTSelectionContainer2D(YTSelectionContainer):
         >>> write_image(np.log10(frb["gas", "density"]), "density_100kpc.png")
         """
 
-        if (self.ds.geometry is Geometry.CYLINDRICAL and self.axis == 1) or (
-            self.ds.geometry is Geometry.POLAR and self.axis == 2
-        ):
-            if center is not None and center != (0.0, 0.0):
-                raise NotImplementedError(
-                    "Currently we only support images centered at R=0. "
-                    + "We plan to generalize this in the near future"
+        match (self.ds.geometry, self.axis):
+            case (Geometry.CYLINDRICAL, 1) | (Geometry.POLAR, 2):
+                if center is not None and center != (0.0, 0.0):
+                    raise NotImplementedError(
+                        "Currently we only support images centered at R=0. "
+                        + "We plan to generalize this in the near future"
+                    )
+                from yt.visualization.fixed_resolution import (
+                    CylindricalFixedResolutionBuffer,
                 )
-            from yt.visualization.fixed_resolution import (
-                CylindricalFixedResolutionBuffer,
-            )
 
-            validate_width_tuple(width)
-            if is_sequence(resolution):
-                resolution = max(resolution)
-            frb = CylindricalFixedResolutionBuffer(self, width, resolution)
-            return frb
+                validate_width_tuple(width)
+                if is_sequence(resolution):
+                    resolution = max(resolution)
+                frb = CylindricalFixedResolutionBuffer(self, width, resolution)
+                return frb
 
         if center is None:
             center = self.center
@@ -1389,37 +1421,6 @@ class YTSelectionContainer3D(YTSelectionContainer):
                     {f"contour_slices_{contour_key}": cids},
                 )
         return cons, contours
-
-    def _get_bbox(self):
-        """
-        Return the bounding box for this data container.
-        This generic version will return the bounds of the entire domain.
-        """
-        return self.ds.domain_left_edge, self.ds.domain_right_edge
-
-    def get_bbox(self) -> tuple[unyt_array, unyt_array]:
-        """
-        Return the bounding box for this data container.
-        """
-        geometry: Geometry = self.ds.geometry
-        if geometry is Geometry.CARTESIAN:
-            le, re = self._get_bbox()
-            le.convert_to_units("code_length")
-            re.convert_to_units("code_length")
-            return le, re
-        elif (
-            geometry is Geometry.CYLINDRICAL
-            or geometry is Geometry.POLAR
-            or geometry is Geometry.SPHERICAL
-            or geometry is Geometry.GEOGRAPHIC
-            or geometry is Geometry.INTERNAL_GEOGRAPHIC
-            or geometry is Geometry.SPECTRAL_CUBE
-        ):
-            raise NotImplementedError(
-                f"get_bbox is currently not implemented for {geometry=}!"
-            )
-        else:
-            assert_never(geometry)
 
     def volume(self):
         """

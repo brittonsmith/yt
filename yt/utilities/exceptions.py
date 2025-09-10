@@ -62,16 +62,6 @@ class YTAmbiguousDataType(YTUnidentifiedDataType):
         return msg
 
 
-class YTSphereTooSmall(YTException):
-    def __init__(self, ds, radius, smallest_cell):
-        self.ds = ds
-        self.radius = radius
-        self.smallest_cell = smallest_cell
-
-    def __str__(self):
-        return f"{self.radius:0.5e} < {self.smallest_cell:0.5e}"
-
-
 class YTAxesNotOrthogonalError(YTException):
     def __init__(self, axes):
         self.axes = axes
@@ -632,9 +622,8 @@ class YTGDFUnknownGeometry(YTException):
 
     def __str__(self):
         return (
-            """Unknown geometry %i. Please refer to GDF standard
-                  for more information"""
-            % self.geometry
+            f"Unknown geometry {self.geometry} . "
+            "Please refer to GDF standard for more information"
         )
 
 

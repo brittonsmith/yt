@@ -1208,7 +1208,7 @@ class InteractiveCamera(Camera):
 
     def save_frames(self, basename, clip_ratio=None):
         for i, frame in enumerate(self.frames):
-            fn = basename + "_%04i.png" % i
+            fn = f"{basename}_{i:04}.png"
             if clip_ratio is not None:
                 write_bitmap(frame, fn, clip_ratio * frame.std())
             else:
@@ -2050,7 +2050,7 @@ class ProjectionCamera(Camera):
             # This is a temporary field, which we will remove at the end
             # it is given a unique name to avoid conflicting with other
             # class instances
-            self.weightfield = ("index", "temp_weightfield_%u" % (id(self),))
+            self.weightfield = ("index", f"temp_weightfield_{id(self)}")
 
             def _make_wf(f, w):
                 def temp_weightfield(field, data):
@@ -2173,8 +2173,8 @@ class ProjectionCamera(Camera):
                         + width / 2.0 * off2 * east_vector
                         + width / 2.0 * off3 * normal_vector
                     )
-                    np.minimum(mi, this_point, mi)
-                    np.maximum(ma, this_point, ma)
+                    np.minimum(mi, this_point, out=mi)
+                    np.maximum(ma, this_point, out=ma)
         # Now we have a bounding box.
         data_source = ds.region(self.center, mi, ma)
 
